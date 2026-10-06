@@ -164,8 +164,8 @@ echo $$ >| "RUN/logs/<name>.pid"; codex exec -m <model> -c model_reasoning_effor
 echo $$ >| "RUN/logs/<name>.pid"; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox read-only <contain> \
   --skip-git-repo-check --ephemeral -C "<start>" [-i "<png>" -i "<png>" ...] -o "<output file>" - < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>&1; rm -f "RUN/logs/<name>.pid"
 # Claude, may write (competitor, synthesizer): the log is a stream of JSON events, so it grows while the call works
-echo $$ >| "RUN/logs/<name>.pid"; ( cd "<dir>" && claude -p --model <model> --effort <effort> --permission-mode auto --strict-mcp-config \
-  --disable-slash-commands --output-format stream-json --verbose < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>| "RUN/logs/<name>.err" ); rm -f "RUN/logs/<name>.pid"
+echo $$ >| "RUN/logs/<name>.pid"; ( cd "<dir>" && claude -p --model <model> --effort <effort> --permission-mode auto \
+  --tools "Read,Write,Edit,Glob,Grep,Bash,Agent,WebSearch,WebFetch" --strict-mcp-config --disable-slash-commands --output-format stream-json --verbose < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>| "RUN/logs/<name>.err" ); rm -f "RUN/logs/<name>.pid"
 # Claude, read-only (attacker, judge): it has no tool that writes; jq saves its final message, or nothing if the call failed
 echo $$ >| "RUN/logs/<name>.pid"; ( cd "<start>" && claude -p --model <model> --effort <effort> --permission-mode dontAsk \
   --tools "Read,Glob,Grep" --allowedTools "Read,Glob,Grep" --strict-mcp-config --disable-slash-commands --output-format stream-json --verbose \
@@ -184,9 +184,13 @@ echo $$ >| "RUN/logs/<name>.pid"; ( cd "<start>" && claude -p --model <model> --
 - **Claude permissions.** Auto mode is the user's choice: KAGE assumes approval rather than prompt,
   with a classifier still between the model and risky actions. Nothing sandboxes these processes:
   rule 3 of the brief is their only fence. `--strict-mcp-config` keeps the user's MCP servers and
-  connected accounts out of every Claude call, and `--disable-slash-commands` their skills. If step
+  connected accounts out of every Claude call, and `--disable-slash-commands` their skills.
+  `--tools` is the whole tool set of a call and of the workers it starts: files, shell, the worker
+  tool and web search and fetch, and nothing else, so Claude Code's built-in tools that publish,
+  schedule or notify through the user's account do not exist there. Never widen that list. If step
   1 found auto refused, use `--permission-mode acceptEdits --allowedTools
-  "Read,Glob,Grep,Agent,Bash(<test command>)"` instead (no `Bash` entry without a test command):
+  "Read,Glob,Grep,Agent,Bash(<test command>)"` instead, with `--tools` unchanged (no `Bash` entry
+  without a test command, no `Agent` entry for a single agent):
   edits and simple file commands (such as `touch`) are accepted inside `<dir>` only, the test
   command runs unsandboxed, and what would otherwise prompt is denied unless the user's own
   settings allow it. Never use `bypassPermissions` or `--dangerously-skip-permissions`: they switch
@@ -201,8 +205,9 @@ echo $$ >| "RUN/logs/<name>.pid"; ( cd "<start>" && claude -p --model <model> --
 - **Worker limit.** A Codex team competitor adds `-c agents.max_concurrent_threads_per_session=3`:
   a fourth worker at the same time is refused, and a finished worker frees its place. Claude has no
   such switch, so there the playbook's limit is an instruction. Nothing caps the total.
-- **Single agents.** A solo Claude competitor and the synthesizer add `--disallowedTools Agent`;
-  the read-only Claude shape has no worker tool. No Codex switch we tried removes its worker tool,
+- **Single agents.** A solo Claude competitor and the synthesizer leave `Agent` out of `--tools`
+  (`"Read,Write,Edit,Glob,Grep,Bash,WebSearch,WebFetch"`), so they have no worker tool; neither
+  has the read-only Claude shape. No Codex switch we tried removes its worker tool,
   so there the brief is the only rule. A Codex log gets a line starting `collab:` when the call
   waits on a worker, so after a solo solve count them (counting is not reading): `grep -c
   '^collab:' "RUN/logs/solve-<L>.log"`. Above 0, it delegated anyway: say so in the result. 0 is

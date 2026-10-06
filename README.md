@@ -172,9 +172,12 @@ it asks before applying a patch.
   browser-control or computer-use tool, and a command that an approved rule had let out of the
   read-only sandbox stayed inside it.
 - What each side keeps. Codex calls, the read-only ones included, keep Codex's built-in web search
-  and image generation. Claude competitors and the synthesizer keep Claude Code's built-in tools,
-  among them web access and tools tied to your Claude account, such as publishing an artifact or
-  scheduling a task. For those, auto mode's classifier and the brief are the only barrier.
+  and image generation. Claude competitors and the synthesizer are started with a fixed tool list:
+  reading, writing and searching files, running commands, web search and fetch, and, in team mode,
+  starting workers. Claude Code's other built-in tools are not on it, so the ones tied to your
+  Claude account (publishing an artifact, scheduling a task, sending a notification) do not exist
+  in those processes or in their workers. Running commands is still on the list, and for that
+  auto mode's classifier and the brief are the only barrier.
 - Both sides load your personal instructions, which can pull a side in another direction: a Claude
   process reads `~/.claude/CLAUDE.md` and runs your hooks, and a Codex process reads
   `~/.codex/AGENTS.md` and sees your Codex skills. In testing, a Claude instruction asking for a
@@ -207,7 +210,8 @@ it asks before applying a patch.
 - Tested status. A full contest has not been run since teams were added: the last full run, a
   2-competitor code task, used the earlier design in which each competitor was one sub-agent.
   Everything else here was tested with live models one call or one competitor at a time
-  (claude 2.1.212, codex-cli 0.159.1).
+  (codex-cli 0.159.1; claude 2.1.212, with the start-up check and the fixed-tool-list checks
+  repeated on claude 2.1.291).
   Codex: a captain starting a worker on a named model and reasoning level; with the containment
   flags, a call and a captain's worker listing no MCP, app, browser-control or computer-use tool;
   that worker unable to write outside the candidate folder, reach the network, or get a command
@@ -221,14 +225,16 @@ it asks before applying a patch.
   captain's-choice worker on another model; a `haiku` worker writing under an auto-mode captain;
   an attacker that cannot write and whose answer lands in its output file; a failed read-only
   call leaving its output file empty; a read-only call reading files outside the folder it
-  starts in; a solo competitor with no worker tool; two team-mode competitors finishing a small
+  starts in; a solo competitor with no worker tool; a competitor and a
+  captain's pinned worker each writing a file under the fixed tool list, and a call to publish an
+  artifact or schedule a task failing there because the tool does not exist; two team-mode competitors finishing a small
   code task with passing tests; the fallback's edit scope, on one model.
   Both: the launch commands in a project path that contains a space, in a shell set to refuse
   overwriting files; the check-ins, including the record being cleared when a call ends.
   Not tested: the synthesizer, judge and final-check briefs end to end; a Claude captain starting a
   worker under the fallback; whether your own permission rules widen the fallback; the Claude
-  three-worker limit, which is an instruction; whether Claude's built-in account tools can be used
-  by a competitor in auto mode.
+  three-worker limit, which is an instruction; what a Claude process can do to your account
+  through the commands it runs.
 
 ## Credits
 

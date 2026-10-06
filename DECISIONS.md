@@ -249,7 +249,10 @@ ran on its configured model. Nothing below has been through a full contest yet.
 
 19. **Every call, on both sides, starts without the user's own tool set-up.**
     Choice: Claude calls start with `--strict-mcp-config` (no MCP servers, which is where
-    connected accounts live) and `--disable-slash-commands` (no skills). Codex calls start with
+    connected accounts live) and `--disable-slash-commands` (no skills), and every Claude call has
+    a fixed `--tools` list: Read, Glob and Grep for attackers and judges (decision 15); Read,
+    Write, Edit, Glob, Grep, Bash, WebSearch and WebFetch for competitors and the synthesizer,
+    plus the worker tool in team mode. Codex calls start with
     `--ignore-user-config` and `--ignore-rules` (no `~/.codex/config.toml`, no approved-command
     rules), `--disable` for plugins, apps, browser use, computer use and memories, and two `-c`
     values that empty the extra writable folders and close the network.
@@ -273,11 +276,21 @@ ran on its configured model. Nothing below has been through a full contest yet.
     the check is the one used here: ask a contained call to list its tools. (c) A task depends on
     data only reachable through a connected account; step 2 already requires that data to be
     pasted into `task.md`.
+    Also rejected, for the Claude tool list: leaving the built-in set in place, or removing the
+    account-tied tools by name with `--disallowedTools`. The built-in set held tools that publish,
+    schedule or notify through the user's Claude account (`Artifact`, `CronCreate`,
+    `RemoteTrigger`, `PushNotification` among 27 at start-up), and a deny-list goes stale with the
+    next tool a release adds. Breaks next quarter for the list itself: a task needs a built-in
+    tool that is not on it (notebook editing, say) and the Claude side has to do it through the
+    shell; or a release renames a tool and the name in `--tools` silently matches nothing. The
+    check is the start-up event, which lists the tools the call really has.
     Not covered: both sides keep built-in web access, Codex keeps image generation, and a Claude
-    competitor keeps Claude Code's built-in tools, some of which act on the user's Claude account
-    (publishing an artifact, scheduling a task). Both sides still load the user's personal
-    instruction files, and the Claude side the user's hooks and agent definitions.
-    Reverse: remove the flags from the launch shapes; nothing else depends on them.
+    process that may write keeps a shell, which nothing sandboxes (decision 15). Both sides still
+    load the user's personal instruction files, and the Claude side the user's hooks and agent
+    definitions.
+    Reverse: remove the flags from the launch shapes; nothing else depends on them. For the tool
+    list alone, drop `--tools` from the may-write shape and give single agents `--disallowedTools
+    Agent` again.
 
 20. **Read-only roles start in a folder that holds only the work.**
     Choice: attackers and judges start in `RUN/candidates` and the final check in
@@ -438,4 +451,37 @@ still not been run.
   Claude captain starting a worker under the `acceptEdits` fallback; whether a user's own
   permission rules widen that fallback (taken from the reviewer's reading, not tested); the
   Claude three-worker limit; whether a Claude competitor in auto mode can use the built-in tools
-  that act on the user's Claude account; a `.pid` record whose process id really is reused.
+  that act on the user's Claude account (settled since by removing them, next section); a `.pid`
+  record whose process id really is reused.
+
+## Found during verification (2026-10-06, fixed Claude tool list, claude 2.1.291)
+
+The `claude` command was updated from 2.1.212 to 2.1.291 between the sections above and this one.
+Each check was one live call with the skill's own launch command, in a scratch run folder whose
+path contains a space.
+- **Start-up check.** `opus` at high: `claude-opus-5-5`, `auto`, `OK`. The alias resolves per
+  installed version: the same line read `claude-opus-4-8` on 2.1.212, above.
+- **Built-in set without `--tools`.** Start-up listed 27 tools, among them `Artifact`,
+  `ArtifactData`, `CronCreate`, `RemoteTrigger`, `PushNotification`, `ScheduleWakeup` and
+  `Workflow`.
+- **Team list.** With `--tools "Read,Write,Edit,Glob,Grep,Bash,Agent,WebSearch,WebFetch"`
+  start-up listed exactly `Task`, `Bash`, `Edit`, `Glob`, `Grep`, `Read`, `WebFetch`, `WebSearch`
+  and `Write`. `Agent` and `Task` in `--tools` gave the same list; start-up names the worker tool
+  `Task` and the model calls it as `Agent`.
+- **Captain and pinned worker under the list.** Captain `opus` at high, `kage-worker` defined as
+  `sonnet` at `medium`: the captain wrote its file, started `kage-worker`, and the worker's turns
+  ran on `claude-sonnet-5-5` and wrote a second file in the same folder. Exit 0, mode `auto`, no
+  denials.
+- **Solo list.** The same list without `Agent`: no `Task` or `Agent` at start-up, the competitor
+  wrote `solution.md` and reported no tool for starting workers. This replaces `--disallowedTools
+  Agent`, which did the same thing to the built-in set.
+- **Account tools are gone, not just refused.** A team-list call told to call `Artifact` and
+  `CronCreate` got, for each: "No such tool available: Artifact. Artifact is disabled for this
+  session, in subagents as well as here." (and the same for `CronCreate`).
+- **Fallback with the list.** `acceptEdits` with `--allowedTools "Read,Glob,Grep,Agent"` and the
+  team `--tools` list: same nine tools at start-up, mode `acceptEdits`, the file written, no
+  denials.
+- **Not verified:** a worker's own tool list (taken from the refusal text above, not listed by a
+  worker); the synthesizer shape end to end (it uses the solo list that was run); web search or
+  fetch actually used, in either mode; what a Claude process can do to the user's account through
+  its shell.
