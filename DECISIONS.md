@@ -21,6 +21,10 @@ quarter / how to reverse.
 - Attackers and judges run on their own side's captain model and reasoning level.
 - Claude processes run in auto permission mode: KAGE assumes approval instead of prompting. It never
   uses the bypass-permissions mode and never changes the user's own settings.
+- Every KAGE process starts in a clean room: none of the user's personal plugins, hooks, settings,
+  output style, instruction files, custom agents, skills or memories, and nothing a competitor
+  left in its folder, with both sides on the same footing. A project's own conventions reach the
+  competitors through the task file, which names the repository's instruction files.
 - No time limit below the platform's 2-hour ceiling for a background command. Instead, a check-in
   about every 10 minutes says what is still running, and only the user stops a call.
 - The name is KAGE (Kelvin's Agent Gauntlet Engine), runnable as `/kage` or `/arena`.
@@ -53,10 +57,11 @@ quarter / how to reverse.
    the two `exclude_*` flags in that case. Claude processes are not sandboxed at all: their scope
    is the brief's instruction, under the permission mode of decision 15. A Codex captain's workers
    inherit the captain's sandbox (verified, decision 14). The sandbox flag alone turned out not to
-   be enough: a user's Codex configuration and approved-command rules reach past it (decision 19).
-   Reverse: change the `--sandbox` values in steps 5 and 6.
+   be enough: a user's Codex configuration and approved-command rules reach past it (decisions 19
+   and 22).
+   Reverse: change the `--sandbox` values in the two Codex launch shapes ("Launching a call").
 
-3. **Candidate worktrees inside the repo, under `.kage/<run>/candidates/`.**
+3. **Candidate worktrees inside the repo, under `.kage/<run>/blind/candidates/`.**
    Standard: Claude Code's own nested dot-directory convention (`.claude/worktrees/`).
    Rejected: worktrees outside the repo (the file pane cannot open them, edits prompt for
    permission).
@@ -146,9 +151,9 @@ ran on its configured model. Nothing below has been through a full contest yet.
     orchestrator's permission mode, and cannot be stripped down to read-only tools.
     Breaks next quarter: the `claude` command on the PATH is logged out, or older than the app
     running the session, while the session itself works (this happened during verification). Every
-    Claude call would fail, so step 1 makes a one-word call first and stops with the reason. A
-    user's personal instruction file is also loaded by every headless process and can pull the
-    Claude side in a direction the Codex side does not get.
+    Claude call would fail, so step 1 makes a one-word call first and stops with the reason, the
+    binary and its version. A user's personal instruction file was also loaded by every headless
+    process; decision 22 closed that on the Claude side.
     Reverse: swap the two Claude launch shapes for Agent calls; briefs and files do not change.
 
 14. **Workers are pinned through each tool's own sub-agent interface, per invocation.**
@@ -198,8 +203,7 @@ ran on its configured model. Nothing below has been through a full contest yet.
     worker and as a pinned one (second round below). A pinned worker model still gets the step 1
     call, to catch a name or level that does not exist, but its mode line is ignored.
     What the fallback does not do: the allowed test command runs code the competitor just wrote,
-    unsandboxed, and the user's own permission rules and hooks still apply on top, so "everything
-    else is refused" would overstate it.
+    unsandboxed. The user's own permission rules and hooks are no longer loaded (decision 22).
     Reverse: edit the "Claude permissions" paragraph of the skill.
 
 16. **Check-ins are a shipped script that exits to wake the orchestrator.**
@@ -235,9 +239,11 @@ ran on its configured model. Nothing below has been through a full contest yet.
     never written, also when another field is changed at the card in the same run.
     Breaks next quarter: a saved model name is retired. Step 1 makes a one-word call on each side
     before the card (and one per pinned worker model), so the run stops there with the reason, on
-    either side, before any contest call is spent. The user names another model, which counts as a
-    change at the card. Before the second round only the Claude side had this check, and a retired
-    Codex model would have failed N competitors at once.
+    either side, before any contest call is spent. The user names another model, and it is saved
+    only if the one that failed came from the file: a replacement for a value from `--claude`,
+    `--codex` or the `--yes` defaults is for that run, like the value it replaces. Before the
+    second round only the Claude side had this check, and a retired Codex model would have failed
+    N competitors at once.
     Reverse: delete the file and the questions are asked again.
 
 18. **Claude logs are JSON event streams.** With plain text output a Claude log stays empty until
@@ -248,6 +254,10 @@ ran on its configured model. Nothing below has been through a full contest yet.
     missing output (one retry, then dropped). Reverse: use text output redirected to the output file.
 
 19. **Every call, on both sides, starts without the user's own tool set-up.**
+    This entry is the tool side of it: what a process can call and reach. It has since grown into
+    a clean room on both sides (decision 22: settings, hooks, plugins, instruction files, skills,
+    memories), held in one wrapper script per tool (decision 23) instead of a flag string in
+    every launch.
     Choice: Claude calls start with `--strict-mcp-config` (no MCP servers, which is where
     connected accounts live) and `--disable-slash-commands` (no skills), and every Claude call has
     a fixed `--tools` list: Read, Glob and Grep for attackers and judges (decision 15); Read,
@@ -285,27 +295,35 @@ ran on its configured model. Nothing below has been through a full contest yet.
     shell; or a release renames a tool and the name in `--tools` silently matches nothing. The
     check is the start-up event, which lists the tools the call really has.
     Not covered: both sides keep built-in web access, Codex keeps image generation, and a Claude
-    process that may write keeps a shell, which nothing sandboxes (decision 15). Both sides still
-    load the user's personal instruction files, and the Claude side the user's hooks and agent
-    definitions.
-    Reverse: remove the flags from the launch shapes; nothing else depends on them. For the tool
+    process that may write keeps a shell, which nothing sandboxes (decision 15). Web access next
+    to reading any file is a way out for data if a later role follows instructions hidden in a
+    competitor's output; nothing technical stops that, and the README says so. When this entry
+    was written both sides also still loaded the user's personal instruction files, and the
+    Claude side the user's hooks and agent definitions: see decision 22 for what is left of that.
+    Reverse: remove the flags from the wrappers; nothing else depends on them. For the tool
     list alone, drop `--tools` from the may-write shape and give single agents `--disallowedTools
     Agent` again.
 
-20. **Read-only roles start in a folder that holds only the work.**
-    Choice: attackers and judges start in `RUN/candidates` and the final check in
-    `RUN/finalcheck`, with every path in their brief absolute.
-    Standard: least privilege again, applied to what a role sees by default: it is shown what its
-    job needs and has to go looking for anything else.
+20. **Blind roles start in one folder that holds everything they are given.**
+    Choice: `RUN/blind` holds the task, the rubric, the candidates, the attacks, the test output
+    and the screenshots, and nothing that names a model or a side. Attackers and judges start
+    there. The final check starts in `RUN/finalcheck`, with its own copy of the task and rubric
+    (`cp`, so byte-identical) beside the labelled solutions, whose file names are the same
+    whatever they came from (`solution.md`, `solution.patch`, `tests.txt`). The roster, briefs,
+    logs and verdicts stay outside both.
+    Standard: least privilege, applied to what a role sees by default: it is shown what its job
+    needs and has to go looking for anything else.
     Rejected: starting in `RUN`, where listing the folder shows `roster.md`, the briefs that name
-    each side's worker tool, and log files whose names differ by side; and copying the task,
-    rubric, attacks and evidence into a per-role folder, which duplicates files that are meant to
-    be byte-identical for everyone (decision 9).
-    Breaks next quarter: a model treats a path outside its start folder as off limits and scores
-    without the task or rubric. It happened once in three Codex test runs (a small model at medium),
-    so the three read-only templates now say that every listed path can be read from where the
-    role starts. Blindness is still by instruction: nothing stops a role from reading `../`.
-    Reverse: set `<start>` back to `RUN`.
+    each side's worker tool, and log files whose names differ by side. Also rejected, after it
+    failed: starting in `RUN/candidates` with the task, rubric, attacks and evidence one level
+    up, reached by absolute path. A Codex role treated those as off limits in one run out of
+    three and scored without the task or rubric, and a line in the brief saying the paths were
+    readable was a patch on the layout, not a fix. With one folder the same check read every
+    file in three runs out of three on each side.
+    Breaks next quarter: a file that names a side is dropped into `RUN/blind` by a later change
+    (a log, a brief) and the judges are unblinded without anyone noticing. The rule is in step 2
+    of the skill. Blindness is still by instruction: nothing stops a role from reading `../`.
+    Reverse: move the files back up and set `<start>` to `RUN`.
 
 21. **The Codex worker limit is a configuration value; the Claude one is an instruction.**
     Choice: a Codex team competitor is started with `agents.max_concurrent_threads_per_session=3`.
@@ -485,3 +503,176 @@ path contains a space.
   worker); the synthesizer shape end to end (it uses the solo list that was run); web search or
   fetch actually used, in either mode; what a Claude process can do to the user's account through
   its shell.
+
+## Clean room and wrappers (2026-10-06)
+
+A second review and a full contest run agreed that the pipeline works and that three things around
+it did not: what each process loads, how the launch flags are kept, and what the result says
+happened.
+
+22. **Every process starts in a clean room, on both sides.**
+    Choice: Claude calls start with `--setting-sources ""` (no user, project or local settings,
+    and with them no `CLAUDE.md` or rules file, plugin, hook, output style or custom agent type),
+    `--settings '{"disableAllHooks":true,"autoMemoryEnabled":false}'` (hooks off a second time,
+    and no auto-memory), `--strict-mcp-config`, `--disable-slash-commands` and
+    `--no-session-persistence`. Codex calls add to decision 19's flags `--disable hooks`,
+    `--disable skill_search`, `-c skills.include_instructions=false` (no skill is listed) and `-c
+    project_doc_max_bytes=0` (no project `AGENTS.md`). The same flags cover the folder a call
+    starts in, which is what keeps a file planted by a competitor from being loaded by the
+    synthesizer. A project's conventions reach competitors through the task file, which names the
+    repository's instruction files for both sides.
+    Standard: hermetic execution, the rule behind reproducible builds (Bazel, the
+    reproducible-builds project) and behind how unattended tools are normally run (`git` with
+    `GIT_CONFIG_GLOBAL=/dev/null`, `bash --norc --noprofile`, `env -i`): a job sees its declared
+    inputs and nothing from the operator's dotfiles. It is the standard because a result that
+    depends on one machine's personal files can be neither reproduced nor compared, and here it
+    also made the two sides unequal. It is done with each vendor's own documented switches.
+    Rejected: `claude --safe-mode`, the vendor's one-flag clean start, which would fail loudly if
+    renamed. It also drops agent definitions passed with `--agents`: a pinned-worker captain got
+    "Agent type 'kage-worker' not found". Alone it left the user's output style in place.
+    Rejected: `claude --bare`, which reads only an API key and ignores a subscription login.
+    Rejected, for Codex: renaming or moving the user's files for the length of a run (KAGE never
+    changes the user's set-up), and switching personal roles off one by one by name (decision 19
+    rejected that pattern for MCP servers).
+    Not decided, and left to the owner: a scratch Codex home (`CODEX_HOME`) holding nothing but
+    the login. With an empty home the prompt has no personal `AGENTS.md` and `codex login status`
+    says "Not logged in", so it would need the login file copied or linked into it, and a token
+    refresh there could rewrite or rotate a credential the user's real Codex depends on. Nothing
+    of the kind was built.
+    What is left: on the Codex side the personal `AGENTS.md` in the Codex home is still loaded and
+    the custom agent roles there are still offered by `spawn_agent`; no flag or config key we
+    found switches either off (`project_doc_max_bytes=0`, an empty `instructions` and
+    `--ignore-user-config` do not). The wrapper passes a developer instruction telling the model
+    to leave both alone, and the captain's brief says "no agent_type". That is a mitigation by
+    instruction and the README says so. On both sides, managed or system-level configuration is
+    not covered and was not tested.
+    Breaks next quarter: a `claude` release changes what `--setting-sources ""` covers, for
+    instance by loading `CLAUDE.md` independently of settings, and personal instructions come
+    back on one side with nothing in the start-up event to show it. The check is the planted-file
+    test below: start a call in a folder whose `CLAUDE.md` asks for a marker word and whose
+    `.claude/settings.json` has a hook that touches a marker file. An older `claude` is the same
+    risk today: 2.1.119 accepted the flags and still listed eight built-in skills.
+    Reverse: edit the flag line in the wrapper; nothing else depends on it.
+
+23. **One wrapper script per tool holds the fixed flags.**
+    Choice: `skills/kage/claude-call.sh` and `skills/kage/codex-call.sh`, beside `heartbeat.sh`.
+    Each `exec`s its tool with that side's fixed flags followed by `"$@"`, so a launch in the
+    skill states only what varies: model, effort, sandbox or tool list, folder, brief, outputs.
+    Both start-up checks go through them too. Called with the single word `which`, a wrapper
+    prints the binary it would run and its version. The binary is the first one on the PATH, or
+    the one named in `KAGE_CLAUDE` / `KAGE_CODEX`.
+    Standard: the checked-in wrapper script (`./gradlew`, `./mvnw`): the project, not the caller,
+    fixes how the tool is invoked, and POSIX `exec "$@"` passes everything else through. The
+    binary override follows the `CC` / `EDITOR` / `GIT_SSH` convention: an environment variable
+    names the program, the PATH is the default. It is the standard because one line to read and
+    one line to change beats sixteen copies.
+    Rejected: the flag string retyped by the orchestrator into every call. Decisions 9, 12 and 16
+    already record that retyped text drifts, and here one dropped flag reopens the containment for
+    one call out of sixteen without any error. Rejected: one launcher that also changes folder,
+    records the process and captures the output; the four shapes stay visible in the skill, where
+    a reviewer can check them. Rejected: copying the wrappers into the run folder, where an
+    unsandboxed Claude competitor could edit a script that later roles run.
+    Breaks next quarter: a release renames a fixed flag and every call on that side fails at
+    start with "unknown option"; or a second, older copy of the tool sits earlier on the PATH
+    (found on the test machine: a stale `claude` 2.1.119 in front of 2.1.291, on which `opus`
+    quietly resolved to an older model and a newer model id was refused). Both show in step 1's
+    check, which prints the binary, its version and the resolved model before any contest call.
+    Reverse: paste the flags back into the launch shapes and delete the two scripts.
+
+24. **Each call's real exit status is saved to a file.**
+    Choice: every launch ends with `echo $? >| RUN/logs/<name>.exit` before its clean-up, and a
+    call counts as successful only if that file holds 0 and the output it owes is there.
+    Standard: the Unix exit status, read from the process that matters and not from the last
+    command of the line (the reason `set -o pipefail` exists). It lives in a file because plain
+    files are this skill's state (decision 5): it survives a compacted context and shows in `ls`.
+    Rejected: ending the line with `exit` of that status. The completion notice would carry it,
+    but nothing on disk would, and the notice had been reporting 0 for every call.
+    Breaks next quarter: a tool exits 0 on a failed call, which is why the output check stays;
+    or exits non-zero after writing a usable answer, which costs one needless retry.
+    Reverse: drop the `echo`.
+
+## Found during verification (2026-10-06, clean room and wrappers, claude 2.1.291, codex-cli 0.159.1)
+
+Every call went through the wrapper scripts as shipped, most from a run folder whose path contains
+a space, in zsh with overwriting refused. The test machine had two `claude` binaries; these used
+2.1.291 except where 2.1.119 is named.
+
+- **What loaded before.** A Claude call with the earlier flags listed an installed plugin and
+  ran its session-start and prompt hooks, used the user's output style, offered the user's custom
+  agent types and had an auto-memory path. A Codex call with the earlier flags listed the user's
+  skills and custom agent roles and had the personal `AGENTS.md`.
+- **Claude flags, one at a time.** `--safe-mode` alone: no hooks, no custom agents, no memory
+  path, but the output style and the plugin entry remained. `--setting-sources ""` alone: no
+  hooks, plugin, custom agent or instruction file, default output style, but the memory path
+  remained. `--settings` with `disableAllHooks` and `autoMemoryEnabled` alone: hooks did not run
+  and the memory path was gone, with everything else still loaded. Together, without safe mode:
+  all of it gone, and `--agents` still registers `kage-worker`.
+- **Planted files, synthesizer shape.** A folder with `.claude/settings.json` (four hooks, an
+  output style, permission rules, a bypass mode), `.claude/settings.local.json`, `CLAUDE.md`,
+  `CLAUDE.local.md`, a rules file, `.mcp.json`, an agent type, a skill and a command. Earlier
+  flags: all five hooks ran, the output style and the agent type were loaded, and the model named
+  the personal and the three planted instruction files. Wrapper, `opus` in auto mode with the
+  solo tool list: no hook ran, default output style, no planted agent, skill or MCP server, the
+  model reported no instruction file, and it wrote its `SYNTHESIS.md`.
+- **Claude roles through the wrapper.** Start-up check: `claude-opus-5-5`, `auto`, `OK`. A captain
+  wrote its file and started `kage-worker`, whose turns ran on `claude-sonnet-5-5` and wrote a
+  second file. A read-only role had Glob, Grep and Read, could not write, and its answer landed
+  in the output file. The fallback (`haiku`, `acceptEdits`) wrote a file and ran `touch`. All
+  started with no plugin beyond three built-in ones, no hook event, no skill, no MCP server, no
+  memory path and only built-in agent types. `--no-session-persistence` left no transcript; the
+  worker left one small metadata file under the user's Claude projects folder.
+- **`--tools` swallows a prompt.** With `--tools` added to the start-up check, a prompt given as
+  the last argument was taken as a tool name and the call ended with "Input must be provided".
+  The check now sends the prompt on stdin, as the launch shapes always did.
+- **Codex flags.** Rendering the prompt without a model (`codex debug prompt-input`) showed the
+  skills block gone with `skills.include_instructions=false` and a project `AGENTS.md` gone with
+  `project_doc_max_bytes=0`, while the personal `AGENTS.md` stayed under every key tried.
+  `--disable skill_search` alone changed nothing visible. Through the wrapper a read-only call
+  listed no skill, answered "NO SKILL" when told to use one by name, listed no MCP, app,
+  browser-control or computer-use tool, and could not write. A hook defined on the command line
+  ran under the earlier flags and did not run through the wrapper. In a folder with a planted
+  `AGENTS.md`, `.codex/config.toml` (an MCP server) and `.codex/hooks.json`, a call got no
+  instruction, no tool and no hook. A command covered by an approved rule failed inside the
+  read-only sandbox.
+- **Custom roles.** A scratch role that declared `sandbox_mode = "danger-full-access"` and an MCP
+  server was offered to a contained captain and could be started. The worker's write outside the
+  folder failed, its network call failed, it described its sandbox as `workspace-write`, it had
+  no MCP tool and the server was never started. So a role's sandbox and MCP settings did not take
+  effect; the role's model and instructions were not tested. The user's own roles were still on
+  the list the captain was offered.
+- **The instruction about personal files.** A read-only Codex call asked what it had been given
+  named the personal `AGENTS.md` and said it was not following it. A captain given a small split
+  task announced its worker's model in the wording of the personal file without the instruction
+  and did not with it. One run each.
+- **Codex logs and workers.** The plain log and the `--json` event stream both record a captain
+  waiting on a worker and nothing about starting one: no count, no model, no role. The `Teams`
+  line for a Codex competitor can therefore only say whether a wait was logged.
+- **Stale binary.** With `claude` 2.1.119 first on the PATH, the check printed that binary and
+  version, `opus` resolved to `claude-opus-4-7` and passed, and a newer model id ended in "does
+  not support this model; version 2.1.280 or newer is required". With `KAGE_CLAUDE` naming the
+  2.1.291 binary the same check resolved `claude-opus-5-5`. `KAGE_CODEX` was checked the same way,
+  with a real path and with one that does not exist.
+- **Exit status.** Claude: 0 for a call that answered, 1 for an unknown model, with the output
+  file left empty. Codex: 0 and 1 the same way, with no output file written.
+- **One start folder (decision 20).** A judge brief built from the shipped template, with every
+  path inside `RUN/blind`, three runs per side (Codex on a small model at medium, the setting
+  that had failed before): each run returned valid JSON and the check word from all six files.
+- **Smaller checks.** A patch holding an untracked binary file failed `git apply` without
+  `--binary` and applied byte-identical with it. The roster line gave 2, 4 and 6 rows, half per
+  side, in bash and zsh. The line that prepares `final/` rebuilt a half-edited folder to match
+  the candidate. The `Teams` counts read 1 worker and two models from a captain's log and 0 from
+  a solo one. The check-ins listed two calls, then one, then none, and ignored a dead record.
+- **Not verified:** a full contest with these changes; the visual path; a Claude captain starting
+  a worker under the fallback; managed or system-level configuration; a custom role's model and
+  instructions in a worker; whether a Codex captain picks a personal role unprompted; the
+  `xcrun_db` cache warnings, which come from the contest report below.
+
+## End-to-end contest (2026-10-06)
+
+One full contest was run on the commit before this section: 2 competitors, team mode, a code task.
+It completed to a `RESULT.md`. Both candidates and the synthesis passed 12 of 12 tests, and
+neither captain delegated. Measured: about $1.59 at API list prices on the Claude side across four
+calls, about 113k tokens on the Codex side across five, about 12.5 minutes of wall-clock time. It
+also showed what the entries above fix: every process had loaded the machine owner's personal
+set-up, each launch reported exit 0 whatever happened, and the result did not say what the teams
+had done. No full contest has been run since those fixes.
