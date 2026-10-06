@@ -51,16 +51,19 @@ and level per side. Never ask about lenses, the rubric, the judges or time limit
 for this run only. Then check that the Claude side can start, with a one-word call on its settings:
 ```bash
 claude -p --model <model> --effort <effort> --permission-mode auto --output-format stream-json --verbose 'Reply with the single word OK.' 2>/dev/null \
-  | jq -r 'select(.subtype=="init").permissionMode, (select(.type=="result") | if .is_error then "ERROR: " + .result else .result end)'
+  | jq -rs '([.[]|select(.subtype=="init").model][0] // "none"), ([.[]|select(.type=="system")|.permissionMode|values]|unique|join(",")), (.[]|select(.type=="result")|if .is_error then "ERROR: " + .result else .result end)'
 ```
-It prints `auto`, then `OK`. An `ERROR:` line or nothing means the `claude` command cannot run
-(`claude auth status` shows its login, which is separate from this session's): stop and tell the
-user. A first line other than `auto` means auto mode was refused: use the fallback in "Launching a
-call" and say so with the card. Print the card and wait for "go" or a change; a change is saved.
+It prints the resolved model, the start-up permission modes, then `OK`. Any other last line: the
+`claude` command cannot run (logged out, see `claude auth status`, a login separate from this
+session's; or too old for the model, and the error names the version): stop and tell the user. A
+middle line other than exactly `auto` (`default`, `auto,default`) means auto mode was refused and
+every write would be denied: use the fallback in "Launching a call" and say so with the card. Put
+the first line on the card: an alias like `opus` resolves per `claude` version, maybe not to this
+session's model. Print the card and wait for "go" or a change; a change is saved.
 `--yes` skips the card, and with no saved file the questions too (defaults, nothing saved).
 ```text
 KAGE line-up
-  Claude team   captain: <model> @ <effort>      workers: <captain's choice | model @ effort>
+  Claude team   captain: <model> (<resolved>) @ <effort>   workers: <captain's choice | model @ effort>
   Codex team    captain: <model> @ <effort>      workers: <...>
   Format        <teams | solo>, <N> competitors (<N/2> per side), <8|12|16> top-level calls
   Judges        one per side, on each captain's model
@@ -134,7 +137,7 @@ echo $$ > RUN/logs/<name>.pid; codex exec -m <model> -c model_reasoning_effort=<
   --skip-git-repo-check --ephemeral -C RUN [-i <png> -i <png> ...] -o <output file> - < RUN/briefs/<name>.md > RUN/logs/<name>.log 2>&1
 # Claude, may write (competitor, synthesizer): the log is a stream of JSON events, so it grows while the call works
 echo $$ > RUN/logs/<name>.pid; ( cd <dir> && claude -p --model <model> --effort <effort> --permission-mode auto \
-  --output-format stream-json --verbose < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err )
+  --strict-mcp-config --output-format stream-json --verbose < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err )
 # Claude, read-only (attacker, judge): it has no tool that writes; jq saves its final message as the output file
 echo $$ > RUN/logs/<name>.pid; ( cd RUN && claude -p --model <model> --effort <effort> --permission-mode dontAsk \
   --tools "Read,Glob,Grep" --allowedTools "Read,Glob,Grep" --strict-mcp-config --output-format stream-json --verbose \
@@ -146,11 +149,12 @@ echo $$ > RUN/logs/<name>.pid; ( cd RUN && claude -p --model <model> --effort <e
   `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true`.
 - **Claude permissions.** Auto mode is the user's choice: KAGE assumes approval rather than prompt,
   with a classifier still between the model and risky actions. Nothing sandboxes these processes:
-  rule 3 of the brief is their only fence. If step 1 found auto refused, use `--permission-mode
+  rule 3 of the brief is their only fence. `--strict-mcp-config` keeps the user's MCP servers and
+  connected accounts out of every Claude call. If step 1 found auto refused, use `--permission-mode
   acceptEdits --allowedTools "Read,Glob,Grep,Agent,Bash(<test command>)"` instead (no `Bash` entry
-  without a test command): edits are accepted inside `<dir>` only and whatever else would prompt is
-  denied. Never use `bypassPermissions` or `--dangerously-skip-permissions`: they switch every
-  check off in a process nobody is watching.
+  without a test command): edits and simple file commands (such as `touch`) are accepted inside
+  `<dir>` only, and whatever else would prompt is denied. Never use `bypassPermissions` or
+  `--dangerously-skip-permissions`: they switch every check off in a process nobody is watching.
 - **Pinned workers.** Codex adds `-c 'agents.default_subagent_model="<model>"' -c
   'agents.default_subagent_reasoning_effort="<effort>"'`. Claude adds `--agents '{"kage-worker":
   {"description": "Does one bounded piece of a larger task.", "prompt": "Do the one piece you are
@@ -312,7 +316,7 @@ hand pieces of the work to workers of your own. Read {{captain_file}} before you
 even if your tools offer them.` `{{worker_policy}}` by side, then by line-up:
 - Claude: `Start workers with the Agent tool (called Task in some versions).` Captain's choice adds
   `Use general-purpose agents and set the model parameter on every call: haiku for the cheapest
-  tier, sonnet for the workhorse tier. A worker's reasoning level cannot be set this way.` Pinned
+  tier, sonnet for the workhorse tier. Such a worker runs at your own reasoning level.` Pinned
   adds `Use only the agent type kage-worker, which runs on <model> at <effort>, and pass no model
   parameter.`
 - Codex: `Start workers with spawn_agent, always with fork_turns "none" and no agent_type. This

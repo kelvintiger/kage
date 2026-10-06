@@ -166,7 +166,10 @@ ran on its configured model. Nothing below has been through a full contest yet.
     and pinned workers silently run on the captain's model while the card says otherwise. Check the
     way it was verified: run one captain without `--ephemeral` and read the model recorded in the
     worker's session file. On the Claude side, a CLI that ignores `effort` in an agent definition
-    would run pinned workers at its default level.
+    would run pinned workers at its default level. (Checked since: claude 2.1.212 applies both
+    `model` and `effort` from the definition, and a worker started with only the `model`
+    parameter runs at the captain's effort. Check it the same way: the `effort` recorded on each
+    turn of the worker's session transcript.)
     Reverse: set `workers` to `"captain"`; no flag is then added.
 
 15. **Claude permission fallback and read-only roles use allow-lists, not broader modes.**
@@ -185,6 +188,10 @@ ran on its configured model. Nothing below has been through a full contest yet.
     Breaks next quarter: under the fallback a Claude competitor needs a command that is not listed
     (a build step, a code generator), is refused, and loses to a Codex competitor that could run
     it. The card says when the fallback is in use, so a lopsided result can be read in that light.
+    Trigger (observed, see below): a refused auto mode is not an error. The call runs in `default`
+    mode, every write is denied, and the model may still reply DONE. Start-up reports the downgrade
+    either in the `init` event or in a `status` event next to an `init` that still says `auto`, so
+    the step 1 check collects the mode from every system event and requires exactly `auto`.
     Reverse: edit the "Claude permissions" paragraph of the skill.
 
 16. **Check-ins are a shipped script that exits to wake the orchestrator.**
@@ -220,6 +227,19 @@ ran on its configured model. Nothing below has been through a full contest yet.
     quarter: the event shape changes and the extracted file is `null`, which the skill treats as a
     missing output (one retry, then dropped). Reverse: use text output redirected to the output file.
 
+19. **Claude competitors and the synthesizer also start with `--strict-mcp-config`.**
+    Choice: every Claude call, not only the read-only ones, starts without the user's MCP servers
+    and connected accounts.
+    Standard: least privilege (OWASP ASVS access control), as in decisions 2 and 15: a process gets
+    only the access its role needs, and solving a standalone task file needs none of these.
+    Rejected: inheriting the user's servers, which in testing gave an unattended auto-mode
+    competitor over a hundred extra tools, including sending mail from the user's account; and a
+    Claude side that can reach the user's accounts while the Codex side cannot.
+    Breaks next quarter: a task that depends on data only reachable through such a server (a doc in
+    a connected drive) cannot be solved. Step 2 already requires that data to be pasted into
+    `task.md`, so the fix is the task file, not the flag.
+    Reverse: drop the flag from the may-write Claude shape.
+
 ## Found during verification (2026-10-06, claude 2.1.212, codex-cli 0.159.1)
 
 - **Codex worker pinning, per call.** A captain on one model at high started a worker with
@@ -251,5 +271,47 @@ ran on its configured model. Nothing below has been through a full contest yet.
 - **Not verified, for the same reason:** a Claude competitor writing a file in auto mode; whether
   auto mode is accepted on a given account and what the start-up event shows when it is not; a
   Claude captain starting a worker on another model; whether `effort` in an agent definition takes
-  effect; a read-only role's answer landing in its output file. Run these before relying on the
-  Claude side.
+  effect; a read-only role's answer landing in its output file. All run since; see the next section.
+
+## Found during verification (2026-10-06, live Claude calls, claude 2.1.212)
+
+Each with the skill's own launch command, in scratch folders. Most ran before `--strict-mcp-config`
+was added to the may-write shape; the start-up check, the solo run and the pinned worker were
+repeated with the final commands.
+- **Start-up check.** `opus` at high: `claude-opus-4-8`, `auto`, `OK`. `haiku` with `auto`: the
+  call succeeds (exit 0, no warning) but runs in `default` mode. With the prompt as an argument
+  `init` said `default`; with a longer brief on stdin, a `status` event said `default` and the
+  following `init` still said `auto`. The old check read only `init` and would have missed the
+  second case, so it now collects every reported mode. A full model id newer than the installed
+  `claude` ended in `ERROR: API Error: 400 ... version 2.1.280 or newer is required`, caught by the
+  last line. The `opus` alias resolved to an older Opus than the model running the session, so the
+  card now shows the resolved model.
+- **Refused auto mode, write role.** Under `haiku` the competitor's Write was denied ("you haven't
+  granted it yet", listed in `permission_denials`), nothing was written, and it still replied DONE.
+  The missing-output rule in step 5 catches that; the step 1 check prevents it.
+- **Fallback scope.** `acceptEdits` with `--allowedTools "Read,Glob,Grep,Agent"`: a Write inside the
+  folder succeeded, a Write one level up was denied, and `touch` inside the folder through Bash
+  succeeded although Bash was not listed: this mode also accepts simple file commands in its folder.
+- **Claude competitor, auto mode.** `opus` at high wrote its file in the candidate folder, exit 0,
+  `permissionMode` `auto` at start-up, no denials.
+- **Claude captain, pinned worker.** Captain `opus` at high with `kage-worker` defined as `sonnet`
+  at `medium`: the worker's turns ran on `claude-sonnet-5` (stream events with its
+  `parent_tool_use_id`, and `modelUsage` listing both models) and its session transcript recorded
+  `effort` `medium` on every turn, the captain's `high`. Redefined at `xhigh`, it recorded `xhigh`.
+  In the same run a `general-purpose` worker given only `model` `sonnet` ran on `claude-sonnet-5`
+  at `high`, the captain's level. The worker policy now says so instead of "cannot be set".
+- **Read-only role.** In the attacker shape, a Write attempt returned "No such tool available:
+  Write"; start-up listed only Glob, Grep and Read and no MCP servers; the `jq` capture wrote
+  exactly the one-line answer to the output file.
+- **Solo.** `--disallowedTools Agent` left no `Task` or `Agent` tool in the start-up list, and the
+  competitor wrote its `solution.md` with Read and Write only.
+- **Personal setup is loaded.** A headless call quoted a heading from the personal
+  `~/.claude/CLAUDE.md` on request, and start-up listed the user's hooks, skills, agents and, without
+  `--strict-mcp-config`, five connected accounts (decision 19). With a personal instruction asking
+  for a plan and approval before non-trivial changes, two team-mode competitors built from the
+  competitor template, on a small code task (input validation plus tests in a Python module), both
+  edited the module and its tests, did not stop at a plan, and passed the tests (11 and 9). The
+  template's "you cannot ask anyone a question or wait for anyone's approval" line is unchanged.
+- **Not verified:** a full contest; a Claude captain under the `acceptEdits` fallback starting a
+  worker; auto mode refused on an account rather than a model; the Claude synthesizer and judge
+  shapes (the judge and attacker share the read-only shape that was run).

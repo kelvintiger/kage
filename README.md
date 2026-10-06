@@ -72,7 +72,9 @@ judge runs on it. The same holds for the Claude side.
 ## Requirements
 
 - Claude Code, with its `claude` command-line tool on your PATH and logged in (`claude auth status`).
-  That login is separate from the desktop app's.
+  That login is separate from the desktop app's, and that copy of `claude` must be recent enough for
+  the model you pick (`claude update`). The line-up card shows which model a name like `opus`
+  resolved to on that copy.
 - The Codex CLI, installed and logged in.
 - git.
 - jq.
@@ -117,7 +119,7 @@ Every run then shows the line-up and waits for `go` or a change, and a change is
 
 ```text
 KAGE line-up
-  Claude team   captain: opus @ high      workers: captain's choice
+  Claude team   captain: opus (<resolved model>) @ high   workers: captain's choice
   Codex team    captain: <model> @ high   workers: <model> @ medium
   Format        teams, 4 competitors (2 per side), 12 top-level calls
   Judges        one per side, on each captain's model
@@ -131,7 +133,8 @@ angles, the rubric, the judges or time limits.
 
 How workers get their model: a Codex captain names the model and reasoning level each time it
 starts a worker. A Claude captain choosing for itself can name a worker's model but not its
-reasoning level. A pinned Claude worker gets both from an agent definition KAGE passes in.
+reasoning level, so that worker runs at the captain's level. A pinned Claude worker gets both from
+an agent definition KAGE passes in.
 
 ## What it never does
 
@@ -146,25 +149,31 @@ it asks before applying a patch.
   their own folder, and a classifier reviews risky actions, but nothing confines them. Codex
   competitors and their workers are sandboxed, each team to its own folder. Claude attackers and
   judges are started without any tool that writes or runs commands. KAGE never uses the
-  bypass-permissions mode.
-- If auto mode is not available on your account, Claude competitors fall back to accepting edits
-  inside their own folder and being refused everything else except reading, starting workers and
-  the project's test command.
+  bypass-permissions mode. Claude processes are started without your MCP servers or connected
+  accounts.
+- Every headless Claude process loads your personal Claude Code setup (`~/.claude/CLAUDE.md`,
+  hooks, skills, agents), which the Codex side does not get. Instructions there can pull the Claude
+  side in another direction; in testing, one asking for a plan and approval before non-trivial
+  changes did not stop a competitor from finishing.
+- If auto mode is refused for the chosen model (it was for `haiku` in testing), Claude competitors
+  fall back to accepting edits and simple file commands inside their own folder and being refused
+  everything else except reading, starting workers and the project's test command.
 - A call may run for up to 2 hours, the longest a background command can run in Claude Code. KAGE
   never stops one earlier on its own. It checks in about every 10 minutes, and if a call does reach
   the 2-hour ceiling it says so and asks you what to do.
 - `--no-team` is enforced on the Claude side (the worker tool is removed) and by instruction only on
   the Codex side, where a competitor that delegates anyway is flagged in the result.
 - The two judges are still LLMs, so the ranking is evidence, not proof.
-- Tested status. Tested: a Codex captain starting a worker on a named model and reasoning level,
-  that worker being unable to write outside the candidate folder, and the check-ins. Checked from
-  the command line only, without a live model: that the headless Claude commands are accepted and
-  report the requested permission mode at start-up, that Claude attackers and judges have no
-  writing tool, that single agents have no worker tool, and that the pinned worker agent is
-  registered. Not yet run: a headless Claude competitor, a Claude captain
-  starting a worker (including whether a pinned worker's reasoning level takes effect), the
-  auto-mode fallback, and a full contest since teams were added. The last full run, a
-  2-competitor code task, used the earlier design in which each competitor was one sub-agent.
+- Tested status. Tested with live models, one call or one competitor at a time: a Codex captain
+  starting a worker on a named model and reasoning level, and that worker being unable to write
+  outside the candidate folder; the check-ins; the start-up check, including a refused auto mode
+  and a `claude` too old for the model; a Claude competitor writing its file in auto mode; a Claude
+  captain starting a pinned worker on another model and reasoning level, and a captain's-choice
+  worker on another model; a Claude attacker that cannot write and whose answer lands in its
+  output file; a solo Claude competitor with no worker tool; two team-mode Claude competitors
+  finishing a small code task with passing tests; the fallback's edit scope, on one model. Not yet
+  run: a full contest since teams were added. The last full run, a 2-competitor code task, used
+  the earlier design in which each competitor was one sub-agent.
 
 ## Credits
 
