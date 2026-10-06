@@ -2,7 +2,7 @@
 name: arena
 description: Alias for /kage (KAGE, Kelvin's Agent Gauntlet Engine), the Claude vs Codex contest. /arena only.
 disable-model-invocation: true
-argument-hint: "[--n 2|4|6] <task>"
+argument-hint: "[--n 2|4|6] [--no-team] [--claude <model>[:<effort>]] [--codex <model>[:<effort>]] [--yes] <task>"
 ---
 
 # arena

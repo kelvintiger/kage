@@ -2,12 +2,12 @@
 name: kage
 description: >-
   KAGE (Kelvin's Agent Gauntlet Engine). Claude and Codex compete on one task: 2, 4 or 6 competitors
-  (half Claude, half Codex) solve it through different lenses, each solution is attacked once by the
-  other model, a blind Claude + Codex judge panel scores them all, and the user gets one synthesized
-  final plus every candidate ranked. Visual work is judged from screenshots; code runs in worktrees
-  with real tests. /kage or /arena only.
+  (half Claude, half Codex, each a team captain unless --no-team) solve it through different lenses,
+  each solution is attacked once by the other model, a blind Claude + Codex judge panel scores them
+  all, and the user gets one synthesized final plus every candidate ranked. Visual work is judged
+  from screenshots; code runs in worktrees with real tests. /kage or /arena only.
 disable-model-invocation: true
-argument-hint: "[--n 2|4|6] <task>"
+argument-hint: "[--n 2|4|6] [--no-team] [--claude <model>[:<effort>]] [--codex <model>[:<effort>]] [--yes] <task>"
 ---
 
 # kage
@@ -17,17 +17,58 @@ arithmetic. You never compete, attack or judge, because the result is only worth
 whoever ran the contest had no hand in the entries or the scores. What the user typed after
 `/kage` (`/arena` is an alias for it): `$ARGUMENTS`. If that shows the unreplaced placeholder (a
 dollar sign and the word ARGUMENTS) instead of their text, you were reached through the `/arena`
-alias, which states the arguments itself. If it is empty, the task is their most recent request and
-your last answer to it is the baseline to beat. `RUN` below is the absolute path of the run folder; write it out
-literally in every command and brief, since shell variables do not survive between Bash calls.
+alias, which states the arguments itself. Leading `--` flags are covered in step 1 and the rest is
+the task. With no task, it is their most recent request and your last answer to it is the baseline
+to beat. `RUN` below is the absolute path of the run folder; write it out literally in every
+command and brief, since shell variables do not survive between Bash calls.
 
-## 1. Size it
+## 1. Size it and confirm the line-up
 
 Use 2 competitors when the task has one right answer (bug fix, factual question), 4 by default, 6
 for open-ended design or writing. `--n` overrides; half are Claude and half Codex, so an odd number
-rounds up, and 6 is the cap. Without `codex` on the PATH there is no arena: stop and say so. Tell
-the user one line, then start: "KAGE: 4 competitors (2 Claude, 2 Codex), 12 model calls, visual
-task." Calls = N solve + N attack + 2 judges + 1 synthesis + 1 final check = 8, 12 or 16.
+rounds up, and 6 is the cap. Each competitor is a **team captain**: one agent that owns its
+candidate and may hand pieces of the work to workers of its own. `--no-team` makes each a single
+agent that may not delegate. Attackers, judges, the synthesizer and the final check are always
+single agents. Without `codex` and `claude` on the PATH there is no arena: stop and say so. Tell the
+user one line: "KAGE: 4 competitors (2 Claude, 2 Codex), teams, 12 top-level calls, code task."
+Top-level calls = N solve + N attack + 2 judges + 1 synthesis + 1 final check = 8, 12 or 16.
+
+The line-up is each side's captain model and reasoning level, and what its workers run on. It is
+remembered in `~/.claude/kage/lineup.json` (`mkdir -p` the folder), so the user is asked once:
+`{"claude": {"captain": {"model": "opus", "effort": "high"}, "workers": "captain"}, "codex":
+{"captain": {"model": "<model>", "effort": "high"}, "workers": {"model": "<model>", "effort":
+"medium"}}}`. `workers` is `"captain"` (the captain picks a cheaper tier for each piece) or one
+pinned model and effort. Every single agent (attacker, judge, synthesizer, final check) runs on its
+own side's captain model and effort.
+
+**No file yet:** ask three questions in one go (AskUserQuestion if you have it, plain text if not)
+and save the answers. Claude captain model and reasoning level (default: this session's model at
+high). Codex captain model and reasoning level (default: `model` and `model_reasoning_effort` in
+`~/.codex/config.toml`). Workers: captain's choice of cheaper tiers (default), or one pinned model
+and level per side. Never ask about lenses, the rubric, the judges or time limits.
+
+**Every run:** `--claude <model>[:<effort>]` and `--codex <model>[:<effort>]` replace that captain
+for this run only. Then check that the Claude side can start, with a one-word call on its settings:
+```bash
+claude -p --model <model> --effort <effort> --permission-mode auto --output-format stream-json --verbose 'Reply with the single word OK.' 2>/dev/null \
+  | jq -r 'select(.subtype=="init").permissionMode, (select(.type=="result") | if .is_error then "ERROR: " + .result else .result end)'
+```
+It prints `auto`, then `OK`. An `ERROR:` line or nothing means the `claude` command cannot run
+(`claude auth status` shows its login, which is separate from this session's): stop and tell the
+user. A first line other than `auto` means auto mode was refused: use the fallback in "Launching a
+call" and say so with the card. Print the card and wait for "go" or a change; a change is saved.
+`--yes` skips the card, and with no saved file the questions too (defaults, nothing saved).
+```text
+KAGE line-up
+  Claude team   captain: <model> @ <effort>      workers: <captain's choice | model @ effort>
+  Codex team    captain: <model> @ <effort>      workers: <...>
+  Format        <teams | solo>, <N> competitors (<N/2> per side), <8|12|16> top-level calls
+  Judges        one per side, on each captain's model
+Captains may start their own workers, so the true number of model calls is not fixed.
+Claude processes run in auto permission mode. For a run without prompts, switch this session to auto mode yourself: KAGE never changes your settings.
+Run it?  (go / change <what>)
+```
+Solo shows `workers: none` and drops the "Captains may" line.
 
 ## 2. Run folder and task file
 
@@ -36,7 +77,8 @@ attacks verdicts logs tests shots`. In a git repo, hide it without editing the u
 ```bash
 X="$(git rev-parse --git-path info/exclude)"; grep -qxF '.kage/' "$X" 2>/dev/null || echo '.kage/' >> "$X"
 ```
-Sub-agents and Codex cannot see this conversation, so `RUN/task.md` must stand alone: the request in
+In team mode, copy the captain playbook `captain.md`, which sits beside this file, to `RUN/captain.md`.
+The other processes cannot see this conversation, so `RUN/task.md` must stand alone: the request in
 the user's own words, every constraint they stated, absolute paths of the files that matter, pasted
 data, what done looks like if they said, and what they disliked about a rejected earlier answer.
 Add no requirement they never gave and no opinion of yours about the right answer: that pushes every
@@ -76,25 +118,65 @@ Classify the task and create one folder per competitor, `RUN/candidates/<L>/`.
   Find the test command in CLAUDE.md / AGENTS.md, `package.json` scripts, `pyproject.toml` or the
   Makefile; if there is none, ask the user once.
 
+## Launching a call
+
+Every model call is its own command-line process, started by Bash with `run_in_background: true`
+and `timeout: 7200000` (2 hours, the most Bash allows), so each side runs on its line-up model and
+a captain can start workers. `<name>` is `solve-<L>`, `attack-<L>`, `judge-claude`, `judge-codex`,
+`synth` or `final-check`; `<model>` and `<effort>` are that side's captain's. The leading `echo`
+records the process for the check-ins below. Four shapes:
+```bash
+# Codex, may write (competitor): the sandbox confines it, and its workers, to <dir>
+echo $$ > RUN/logs/<name>.pid; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox workspace-write \
+  --skip-git-repo-check --ephemeral -C <dir> -o RUN/logs/<name>.last.md - < RUN/briefs/<name>.md > RUN/logs/<name>.log 2>&1
+# Codex, read-only (attacker, judge, final check): -o saves its final message as the output file
+echo $$ > RUN/logs/<name>.pid; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox read-only \
+  --skip-git-repo-check --ephemeral -C RUN [-i <png> -i <png> ...] -o <output file> - < RUN/briefs/<name>.md > RUN/logs/<name>.log 2>&1
+# Claude, may write (competitor, synthesizer): the log is a stream of JSON events, so it grows while the call works
+echo $$ > RUN/logs/<name>.pid; ( cd <dir> && claude -p --model <model> --effort <effort> --permission-mode auto \
+  --output-format stream-json --verbose < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err )
+# Claude, read-only (attacker, judge): it has no tool that writes; jq saves its final message as the output file
+echo $$ > RUN/logs/<name>.pid; ( cd RUN && claude -p --model <model> --effort <effort> --permission-mode dontAsk \
+  --tools "Read,Glob,Grep" --allowedTools "Read,Glob,Grep" --strict-mcp-config --output-format stream-json --verbose \
+  < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err ); \
+  jq -r 'select(.type=="result") | .result' RUN/logs/<name>.log > <output file>
+```
+- **Codex sandbox.** `workspace-write` writes only in its own folder, plus `/tmp` and `$TMPDIR`. If
+  `RUN` itself is under one of those (or `/private/tmp`), that would reach its neighbours, so add
+  `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true`.
+- **Claude permissions.** Auto mode is the user's choice: KAGE assumes approval rather than prompt,
+  with a classifier still between the model and risky actions. Nothing sandboxes these processes:
+  rule 3 of the brief is their only fence. If step 1 found auto refused, use `--permission-mode
+  acceptEdits --allowedTools "Read,Glob,Grep,Agent,Bash(<test command>)"` instead (no `Bash` entry
+  without a test command): edits are accepted inside `<dir>` only and whatever else would prompt is
+  denied. Never use `bypassPermissions` or `--dangerously-skip-permissions`: they switch every
+  check off in a process nobody is watching.
+- **Pinned workers.** Codex adds `-c 'agents.default_subagent_model="<model>"' -c
+  'agents.default_subagent_reasoning_effort="<effort>"'`. Claude adds `--agents '{"kage-worker":
+  {"description": "Does one bounded piece of a larger task.", "prompt": "Do the one piece you are
+  briefed on, inside the folder you are given, then report what you changed and how you checked
+  it.", "model": "<model>", "effort": "<effort>"}}'`. Captain's choice needs no flag.
+- **Single agents.** A solo Claude competitor and the synthesizer add `--disallowedTools Agent`.
+  No Codex switch we tried removes its worker tool, so there the brief is the only rule: a line
+  starting `collab:` in a solo competitor's log means it delegated anyway; note it in the result.
+- Do not read the logs. An output file that is empty or just `null` counts as missing.
+
+**Check-ins, not time limits.** Nothing below the 2-hour ceiling stops a call. After launching a
+batch, unless a check-in is already waiting, start one in the background with `timeout: 900000`:
+`sh <this skill's folder>/heartbeat.sh RUN/logs`. It returns after 10 minutes, or as soon as no
+call is running, with one line per call still running: its name, minutes elapsed, and `log growing`
+or `no new output for N min`. Show the user those lines as they are and, if any call is still
+running, start it again. Never stop a call yourself because it is slow or quiet; the user can say
+stop at any check-in. Between check-ins wait for the completion notifications and do not poll. If a
+call is stopped at the 2-hour ceiling, say so plainly (which call, and that it ran 2 hours without
+finishing) and ask the user whether to rerun it, go on without it, or stop.
+
 ## 5. Solve, then collect evidence
 
-Write `RUN/briefs/solve-<L>.md` per competitor from the competitor template; only the lens line
-differs. Launch all of them in one message so they run concurrently.
-- Claude: Agent tool, `subagent_type: general-purpose`, prompt `Read RUN/briefs/solve-<L>.md and
-  follow it exactly.`
-- Codex: Bash with `run_in_background: true` and `timeout: 600000`. No `-m`: it uses the model in
-  `~/.codex/config.toml`.
-  ```bash
-  codex exec --sandbox workspace-write --skip-git-repo-check --ephemeral -C RUN/candidates/<L> \
-    -o RUN/logs/<L>.last.md - < RUN/briefs/solve-<L>.md > RUN/logs/<L>.log 2>&1
-  ```
-  This sandbox writes only in its own folder, plus `/tmp` and `$TMPDIR`. If `RUN` itself is under one
-  of those (or `/private/tmp`), that would reach its neighbours, so add
-  `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true`.
-
-Codex takes minutes: wait for the completion notifications, do not poll. The 10-minute timeout is
-the hang detector: if it stops a call, stop and ask the user. A competitor with no `solution.md`, no
-`index.html` or an empty diff gets one retry, then is dropped and reported. Under 2 left: stop, say so.
+Write `RUN/briefs/solve-<L>.md` per competitor from the competitor template; only the lens line and
+the team or solo paragraph differ. Launch all of them in one message so they run concurrently, each
+with `<dir>` = `RUN/candidates/<L>`. A competitor with no `solution.md`, no `index.html` or an empty
+diff gets one retry, then is dropped and reported. Under 2 left: stop, say so.
 
 The evidence is yours to collect, not the competitors'. **Code:** write each patch, then run the
 tests in `base` (to `base.txt`) and in every candidate, one at a time as suites share ports:
@@ -131,23 +213,19 @@ is missing or a render fails, judge every candidate from source only and say so 
 Each candidate is attacked exactly once, by the other model, since a model is worst at seeing its
 own kind of mistake: Claude attacks what Codex made, Codex attacks what Claude made. Briefs are
 `RUN/briefs/attack-<L>.md`, attacks land in `RUN/attacks/<L>.md`, and all launch in one message.
-Claude attackers are Agent calls. Codex attackers, like every later Codex call, run in the background
-as in step 5 but with no write access, and `-o` saves the final message as the output file:
-```bash
-codex exec --sandbox read-only --skip-git-repo-check --ephemeral -C RUN [-i <png> -i <png> ...] \
-  -o RUN/attacks/<L>.md - < RUN/briefs/attack-<L>.md > RUN/logs/attack-<L>.log 2>&1
-```
-There is no defend or revise round: the judges decide which attacks hold. A missing attack gets one
-retry, then counts as no attacks.
+Attackers, like the judges and the final check, are launched in the read-only shape. There is no
+defend or revise round: the judges decide which attacks hold. A missing attack gets one retry, then
+counts as no attacks.
 
 ## 7. Judge panel
 
-Two judges score every candidate, one Claude sub-agent and one Codex, launched together: different
-model families cancel each other's taste for their own output. Each gets the task, the rubric, every
-candidate by letter only, every attack and the evidence, and writes `RUN/verdicts/judge-claude.json`
-or `judge-codex.json`. The Claude judge Reads the PNGs. The Codex judge gets them attached in the
-order its brief lists: `-i` swallows every following argument that is not a flag, so each image
-needs its own `-i`, with `-o` after them and the prompt on stdin. The rubric (`RUN/rubric.md`):
+Two judges score every candidate, one Claude and one Codex, launched together: different model
+families cancel each other's taste for their own output. Each gets the task, the rubric, every
+candidate by letter only, every attack and the evidence, and its final message is saved as
+`RUN/verdicts/judge-claude.json` or `judge-codex.json`. The Claude judge Reads the PNGs. The Codex
+judge gets them attached in the order its brief lists: `-i` swallows every following argument that
+is not a flag, so each image needs its own `-i`, with `-o` after them and the prompt on stdin. The
+rubric (`RUN/rubric.md`):
 ```text
 Score each criterion 0-10 and use the whole scale: a 7 is not a polite default. Weighted total (0-100) = correctness x3 + completeness x2.5 + robustness x2 + specificity x1.5 + clarity x1.
 Correctness (30): is it right? 10 nothing wrong after checking it yourself / 7 slips that do not change the outcome / 4 one real error the person would trip on / 0-2 wrong at the core.
@@ -173,9 +251,10 @@ or reorder because you disagree with a judge.
 
 Prepare `RUN/final/` from the top-ranked candidate without reading it. Text and visual: `cp -R
 RUN/candidates/<top>/. RUN/final/`. Code: `git worktree add --detach RUN/final HEAD`, then `git -C
-RUN/final apply RUN/candidates/<top>.patch`, plus the symlinks. One Claude sub-agent gets
-`RUN/briefs/synth.md`. For code, then run the tests in `final` (to `RUN/tests/final.txt`) and write
-`RUN/final.patch` with the step 5 commands, adding `':(exclude)SYNTHESIS.md'`.
+RUN/final apply RUN/candidates/<top>.patch`, plus the symlinks. One Claude single agent, launched in
+the may-write shape with `<dir>` = `RUN/final`, gets `RUN/briefs/synth.md`. For code, then run the
+tests in `final` (to `RUN/tests/final.txt`) and write `RUN/final.patch` with the step 5 commands,
+adding `':(exclude)SYNTHESIS.md'`.
 
 Then one Codex judge, read-only, scores the synthesis against the raw top-ranked candidate, and the
 baseline if there is one, without knowing which is which. The path `final/` would give it away, so
@@ -225,11 +304,23 @@ the `index.html` for visual. For a text task, then print the synthesis in full.
 ## Prompt templates
 
 One template per role, shared by both models. Fill the `{{placeholders}}` and write the result to
-`RUN/briefs/`. Only `{{deliver}}` depends on who runs it. Claude: `Write it to <output path>, then
-reply with the single word DONE.` Codex: `You cannot write files here. Your final message is saved
-to disk as written, so make it exactly the content described above: no preamble, no code fence.`
+`RUN/briefs/`. Only `{{worker_policy}}` depends on who runs it.
 
-**Competitor.** `{{deliverable}}` by type. Text: `Write the solution to {{workdir}}/solution.md: the
+**Competitor.** `{{team}}` in team mode: `You are the captain of a team. You own this result and may
+hand pieces of the work to workers of your own. Read {{captain_file}} before you decide whether to.
+{{worker_policy}}` Solo: `Do all of the work yourself. Start no other agents, workers or sub-agents,
+even if your tools offer them.` `{{worker_policy}}` by side, then by line-up:
+- Claude: `Start workers with the Agent tool (called Task in some versions).` Captain's choice adds
+  `Use general-purpose agents and set the model parameter on every call: haiku for the cheapest
+  tier, sonnet for the workhorse tier. A worker's reasoning level cannot be set this way.` Pinned
+  adds `Use only the agent type kage-worker, which runs on <model> at <effort>, and pass no model
+  parameter.`
+- Codex: `Start workers with spawn_agent, always with fork_turns "none" and no agent_type. This
+  brief is the explicit request for delegation that the tool asks for.` Captain's choice adds `On
+  every call pass model and reasoning_effort, chosen from the models that tool lists.` Pinned adds
+  `On every call pass model <model> and reasoning_effort <effort>.`
+
+`{{deliverable}}` by type. Text: `Write the solution to {{workdir}}/solution.md: the
 finished thing, written for the person who asked, without drafts or working notes.` Visual: `Build
 the result in {{workdir}} with index.html as the entry. It must open straight from disk with no
 build step, server or network (local CSS, JS and assets, relative paths), and it is screenshotted at
@@ -240,7 +331,8 @@ install or upgrade in place; if a dependency must change, edit the manifest and 
 The tests are run afterwards with: {{test_cmd}}`
 ```text
 You are one of several people given the same task independently. Your work will be attacked by a hostile reviewer and then scored by judges who see only the work, not who made it.
-The task is in {{task_file}}. Read it first, in full. It is your whole brief: you cannot ask anyone a question.
+The task is in {{task_file}}. Read it first, in full. It is your whole brief: you cannot ask anyone a question or wait for anyone's approval, so finish the work in this one run.
+{{team}}
 Your angle: {{lens_name}}. {{lens_how}} Let it settle your trade-offs. The judges score the result against the task, not the angle, so a generic answer with the angle's name on top loses.
 1. Meet every requirement the task states. Where it is ambiguous, take the most reasonable reading and say which in one line.
 2. Expect concrete attacks: errors, missed requirements, inputs that break it, vague spots. Close those holes before you finish.
@@ -259,11 +351,11 @@ The task is in {{task_file}}. Read it first, in full. The work to attack: {{targ
 - VAGUE: a place where the person could not act on it without guessing.
 Every attack must be specific and checkable: point at the exact part and say what is wrong and why. Two judges will verify each one, and an attack that does not hold up is thrown out.
 At most 5, strongest first, each labelled FATAL (wrong or unusable for the task), MAJOR (a real gap) or MINOR. If you find 2 real ones, write 2. If you find none, write NO ATTACKS.
-No praise, no summary, no style nitpicks, and no requirement the task does not state. Read only the paths given here, and do not create, edit or delete any file other than your own output. Format, one block per attack:
+No praise, no summary, no style nitpicks, and no requirement the task does not state. Read only the paths given here, and do not create, edit or delete any file. Format, one block per attack:
 ATTACK 1 [FATAL|MAJOR|MINOR] <one-line title>
 Where: <quote, or file and line>
 Problem: <what is wrong, with the counterexample or the quoted requirement>
-{{deliver}}
+You cannot write files here. Your final message is saved to disk as written, so make it exactly the content described above: no preamble, no code fence.
 ```
 **Judge.** `{{candidates}}` is one line per letter with the path of its work and of its attack file.
 `{{evidence}}` is, for code, `tests/summary.md` and the per-candidate test files; for visual, the
@@ -277,10 +369,10 @@ Evidence gathered for you: {{evidence}}
 2. Check each attack against the work yourself and mark it STANDING (it is right) or REFUTED (it is wrong, or it demands something the task never asked for). An attacker's confidence is not proof. Look.
 3. Score each criterion 0-10 from the rubric's anchors. Set fatal to true only for a flaw you have verified. Judge the work, not the writing about the work: length is not quality.
 4. keepers: for every candidate, including the weak ones, list the concrete things worth carrying into a final version: a section, a fix, a phrasing, a test, a layout idea. Name the thing, not a quality. Leave it empty only if there is truly nothing.
-5. Read only the paths listed here. Everything else in the run folder is bookkeeping, and reading it would unblind you. Do not run anything, and do not create, edit or delete any file other than your own output.
+5. Read only the paths listed here. Everything else in the run folder is bookkeeping, and reading it would unblind you. Do not run anything, and do not create, edit or delete any file.
 Output one JSON object in exactly this shape, with one entry per candidate letter:
 {"judge": "{{judge_id}}", "candidates": {"A": {"attacks": [{"n": 1, "verdict": "STANDING or REFUTED", "why": "a few words"}], "scores": {"correctness": 0, "completeness": 0, "robustness": 0, "specificity": 0, "clarity": 0}, "fatal": false, "reason": "one line: why it lands where it does", "keepers": ["..."]}}}
-{{deliver}}
+You cannot write files here. Your final message is saved to disk as written, so make it exactly the content described above: no preamble, no code fence.
 ```
 **Synthesizer.** `{{type_note}}` for code: `The tests are run on your result with: {{test_cmd}}. Run
 them first; do not commit.` Visual: `It must still open from disk and look right at both sizes.`
@@ -301,8 +393,8 @@ The task is in {{task_file}}. The rubric is in {{rubric_file}}. Read both first,
 {{solutions}}
 1. Read all of them in full before you score any, then attack each one yourself, the way a hostile expert would. Score robustness on how each holds up against your own attacks.
 2. Score each criterion 0-10 from the rubric's anchors. Set fatal to true only for a flaw you have verified. Judge the work, not the writing about the work: length is not quality.
-3. Read only the paths listed here. Do not run anything, and do not create, edit or delete any file other than your own output.
+3. Read only the paths listed here. Do not run anything, and do not create, edit or delete any file.
 Output one JSON object in exactly this shape, with one entry per label:
 {"solutions": {"X": {"scores": {"correctness": 0, "completeness": 0, "robustness": 0, "specificity": 0, "clarity": 0}, "fatal": false, "reason": "one line"}}, "best": "X", "why": "one sentence: the decisive difference"}
-{{deliver}}
+You cannot write files here. Your final message is saved to disk as written, so make it exactly the content described above: no preamble, no code fence.
 ```
