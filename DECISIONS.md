@@ -52,7 +52,8 @@ quarter / how to reverse.
    folder under those lets a competitor write into its neighbours. Verified here; the skill adds
    the two `exclude_*` flags in that case. Claude processes are not sandboxed at all: their scope
    is the brief's instruction, under the permission mode of decision 15. A Codex captain's workers
-   inherit the captain's sandbox (verified, decision 14).
+   inherit the captain's sandbox (verified, decision 14). The sandbox flag alone turned out not to
+   be enough: a user's Codex configuration and approved-command rules reach past it (decision 19).
    Reverse: change the `--sandbox` values in steps 5 and 6.
 
 3. **Candidate worktrees inside the repo, under `.kage/<run>/candidates/`.**
@@ -191,7 +192,14 @@ ran on its configured model. Nothing below has been through a full contest yet.
     Trigger (observed, see below): a refused auto mode is not an error. The call runs in `default`
     mode, every write is denied, and the model may still reply DONE. Start-up reports the downgrade
     either in the `init` event or in a `status` event next to an `init` that still says `auto`, so
-    the step 1 check collects the mode from every system event and requires exactly `auto`.
+    the step 1 check collects the mode from every system event and requires exactly `auto`. The
+    refusal belongs to the model that runs the session, so the trigger is the captain's model only:
+    a `haiku` worker under an auto-mode `opus` captain wrote files, both as a captain's-choice
+    worker and as a pinned one (second round below). A pinned worker model still gets the step 1
+    call, to catch a name or level that does not exist, but its mode line is ignored.
+    What the fallback does not do: the allowed test command runs code the competitor just wrote,
+    unsandboxed, and the user's own permission rules and hooks still apply on top, so "everything
+    else is refused" would overstate it.
     Reverse: edit the "Claude permissions" paragraph of the skill.
 
 16. **Check-ins are a shipped script that exits to wake the orchestrator.**
@@ -208,7 +216,12 @@ ran on its configured model. Nothing below has been through a full contest yet.
     folder (decisions 9 and 12: text an orchestrator retypes drifts).
     Breaks next quarter: a process id is reused and a finished call is listed as running, or a
     Claude call thinks for more than 10 minutes without emitting an event and is listed as quiet.
-    Both produce a wrong line, never a wrong action, because nothing acts on the lines but the user.
+    The second is only a wrong line. The first was more than that: the orchestrator starts another
+    check-in while any call is listed, so a stale record could keep it checking in for ever. Each
+    launch now removes its own record when the call ends, and the orchestrator removes the record
+    of any call whose completion notice has arrived, which covers a call stopped from outside (the
+    2-hour ceiling) that never reached its own clean-up. What is left is a wrong line for at most
+    one check-in.
     Reverse: delete the paragraph and the script; calls still notify when they finish.
 
 17. **The line-up lives in `~/.claude/kage/lineup.json`; flags override it for one run.**
@@ -217,28 +230,79 @@ ran on its configured model. Nothing below has been through a full contest yet.
     the choice is about the user's accounts, not about a project.
     Rejected: the skill folder (a git checkout, overwritten on update); the project's `.kage/`
     (asked again in every repository); Claude Code's own settings file (not KAGE's to write).
-    Breaks next quarter: a saved model name is retired. The one-word call in step 1 fails for
-    Claude, or the first Codex call fails, and the user changes the line-up at the card.
+    What is written: the answers to the first-run questions, and afterwards only a field the user
+    changes at the card. A value given with `--claude` or `--codex` applies to that run and is
+    never written, also when another field is changed at the card in the same run.
+    Breaks next quarter: a saved model name is retired. Step 1 makes a one-word call on each side
+    before the card (and one per pinned worker model), so the run stops there with the reason, on
+    either side, before any contest call is spent. The user names another model, which counts as a
+    change at the card. Before the second round only the Claude side had this check, and a retired
+    Codex model would have failed N competitors at once.
     Reverse: delete the file and the questions are asked again.
 
 18. **Claude logs are JSON event streams.** With plain text output a Claude log stays empty until
     the call ends, so a check-in could not tell working from stuck. `--output-format stream-json`
-    grows as the call works, and `jq` takes the final message from the last event. Breaks next
+    grows as the call works, and `jq` takes the final message from the last event, unless that
+    event is marked as an error: an API error must not be saved as an attack or a verdict. Breaks next
     quarter: the event shape changes and the extracted file is `null`, which the skill treats as a
     missing output (one retry, then dropped). Reverse: use text output redirected to the output file.
 
-19. **Claude competitors and the synthesizer also start with `--strict-mcp-config`.**
-    Choice: every Claude call, not only the read-only ones, starts without the user's MCP servers
-    and connected accounts.
-    Standard: least privilege (OWASP ASVS access control), as in decisions 2 and 15: a process gets
-    only the access its role needs, and solving a standalone task file needs none of these.
-    Rejected: inheriting the user's servers, which in testing gave an unattended auto-mode
-    competitor over a hundred extra tools, including sending mail from the user's account; and a
-    Claude side that can reach the user's accounts while the Codex side cannot.
-    Breaks next quarter: a task that depends on data only reachable through such a server (a doc in
-    a connected drive) cannot be solved. Step 2 already requires that data to be pasted into
-    `task.md`, so the fix is the task file, not the flag.
-    Reverse: drop the flag from the may-write Claude shape.
+19. **Every call, on both sides, starts without the user's own tool set-up.**
+    Choice: Claude calls start with `--strict-mcp-config` (no MCP servers, which is where
+    connected accounts live) and `--disable-slash-commands` (no skills). Codex calls start with
+    `--ignore-user-config` and `--ignore-rules` (no `~/.codex/config.toml`, no approved-command
+    rules), `--disable` for plugins, apps, browser use, computer use and memories, and two `-c`
+    values that empty the extra writable folders and close the network.
+    Standard: least privilege (OWASP ASVS access control), applied the way unattended tools are
+    normally run: from a clean configuration instead of the operator's own (`git` with
+    `GIT_CONFIG_GLOBAL=/dev/null`, `curl -q`, `bash --norc`). It is the standard because an
+    allow-list of what a job may use stays correct when the user adds something, and a deny-list
+    does not.
+    Rejected: switching the user's Codex MCP servers off one by one (`-c
+    mcp_servers.<name>.enabled=false` for each name `codex mcp list` reports). It worked for the
+    servers defined in the config file, but it fails outright for a server that a plugin provides
+    ("invalid transport"), it has to be regenerated per machine, and it leaves the rest of the
+    file in force: other permission settings, a `notify` program, and above all the rules.
+    Also rejected: inheriting the user's set-up. On the Claude side that gave an unattended
+    auto-mode competitor over a hundred extra tools, including sending mail. On the Codex side a
+    `read-only` call had the app tools of every connected account and MCP servers that run code,
+    and a command covered by an approved-command rule ran outside the sandbox.
+    Breaks next quarter: (a) a user whose Codex only works through `config.toml` (a custom model
+    provider) cannot run the Codex side; the step 1 call fails and says so, and the README lists
+    it. (b) A Codex release adds another on-by-default feature that reaches outside the sandbox;
+    the check is the one used here: ask a contained call to list its tools. (c) A task depends on
+    data only reachable through a connected account; step 2 already requires that data to be
+    pasted into `task.md`.
+    Not covered: both sides keep built-in web access, Codex keeps image generation, and a Claude
+    competitor keeps Claude Code's built-in tools, some of which act on the user's Claude account
+    (publishing an artifact, scheduling a task). Both sides still load the user's personal
+    instruction files, and the Claude side the user's hooks and agent definitions.
+    Reverse: remove the flags from the launch shapes; nothing else depends on them.
+
+20. **Read-only roles start in a folder that holds only the work.**
+    Choice: attackers and judges start in `RUN/candidates` and the final check in
+    `RUN/finalcheck`, with every path in their brief absolute.
+    Standard: least privilege again, applied to what a role sees by default: it is shown what its
+    job needs and has to go looking for anything else.
+    Rejected: starting in `RUN`, where listing the folder shows `roster.md`, the briefs that name
+    each side's worker tool, and log files whose names differ by side; and copying the task,
+    rubric, attacks and evidence into a per-role folder, which duplicates files that are meant to
+    be byte-identical for everyone (decision 9).
+    Breaks next quarter: a model treats a path outside its start folder as off limits and scores
+    without the task or rubric. It happened once in three Codex test runs (a small model at medium),
+    so the three read-only templates now say that every listed path can be read from where the
+    role starts. Blindness is still by instruction: nothing stops a role from reading `../`.
+    Reverse: set `<start>` back to `RUN`.
+
+21. **The Codex worker limit is a configuration value; the Claude one is an instruction.**
+    Choice: a Codex team competitor is started with `agents.max_concurrent_threads_per_session=3`.
+    Standard: enforce a limit in the tool that grants the resource rather than in a prompt (the
+    same reason rate limits live in the server, not in client documentation).
+    Rejected: leaving it to the playbook on both sides; and a hard cap on the total number of
+    workers, which is the owner's decision and has not been made.
+    Breaks next quarter: the key is renamed and the limit silently stops applying; rerun the check
+    (a captain asked to start five workers at once: three start, two are refused).
+    Reverse: drop the flag.
 
 ## Found during verification (2026-10-06, claude 2.1.212, codex-cli 0.159.1)
 
@@ -315,3 +379,63 @@ repeated with the final commands.
 - **Not verified:** a full contest; a Claude captain under the `acceptEdits` fallback starting a
   worker; auto mode refused on an account rather than a model; the Claude synthesizer and judge
   shapes (the judge and attacker share the read-only shape that was run).
+
+## Review fixes, second round (2026-10-06, claude 2.1.212, codex-cli 0.159.1)
+
+An independent review of team mode said not to merge. What was changed, and what each change rests
+on. Every check was a single live call or a local command in a scratch folder; a full contest has
+still not been run.
+
+- **Codex inherited the user's set-up (decision 19).** With the launch flags as they were, a
+  `read-only` call listed about three hundred app tools for connected accounts (sending mail among
+  them) and MCP servers that run code, and was given saved memories. It also wrote a file: with an
+  approved-command rule for `npm test` in place, that command ran outside the sandbox.
+  With the new flags the same two calls listed no MCP, app, browser-control or computer-use tool
+  and no memories, and `npm test` failed with "Operation not permitted". `--ignore-user-config`
+  without `--ignore-rules` still let the command out, so both are needed.
+- **Workers inherit it.** A captain started with the new flags spawned one worker. The worker
+  listed the same reduced tool set; its `npm test`, a direct write to the parent folder and a
+  `curl` all failed; a write inside the folder succeeded. Its session record showed the captain's
+  sandbox policy and no approved-command rules.
+- **`writable_roots=[]` replaces.** With a throwaway configuration that named an extra writable
+  folder and switched the network on, the rendered sandbox listed the extra folder; adding the two
+  `-c` values removed it and reported the network as restricted. No model call was needed for this.
+- **A project's own Codex config is not loaded either.** In a scratch repository whose
+  `.codex/config.toml` defined an MCP server, a call with the new flags did not start that server
+  and listed no tool from it.
+- **Still present under the new flags:** web search and image generation, the worker tool, and the
+  personal `AGENTS.md` and skills. `--disable multi_agent --disable multi_agent_v2` still left a
+  call able to start a worker, and `agents.max_concurrent_threads_per_session=0` is rejected ("must
+  be at least 1"), so solo on Codex remains an instruction.
+- **Codex start-up check (decision 17).** Good model: `OK`, exit 0. Unknown model and unknown
+  reasoning level: exit 1 with the API's reason on the last lines, which the check prints.
+- **Claude start-up check.** `opus` at high: resolved model, `auto`, `OK`. `haiku`: `default`,
+  `OK`. An unknown reasoning level is now stopped before the call, because `claude` would only
+  warn and carry on. An unknown model: `ERROR:` with the reason. Success is read from the result's
+  error flag, so a reply of `OK.` no longer stops a run.
+- **Auto mode and workers (decision 15).** Under an auto-mode `opus` captain, a `haiku` worker
+  created a file with Write and another with `touch`, with no denial recorded, as a
+  captain's-choice worker and as a pinned `kage-worker`.
+- **`--disable-slash-commands`.** The start-up event listed the user's skills and commands without
+  it and none with it. A captain started with it still ran its worker. Agent definitions and hooks
+  are still loaded.
+- **Worker limit (decision 21).** With the value 3, a captain asked for five workers at once got
+  three, and two refusals ("agent thread limit reached"). Asked for three, then two more after the
+  first three had finished, it got all five.
+- **Start folder (decision 20).** In a run folder whose path contains a space, in a shell set to
+  refuse overwriting files, a Claude read-only call started in `candidates` read the task, rubric,
+  candidate, attack and evidence files and its answer landed in the verdict file, replacing a stale
+  one. The Codex call did the same in two runs out of three; in the third it read only the file
+  inside its folder and reported the others as unreadable without trying, although the sandbox
+  allows the read.
+- **Failed read-only call.** A Claude call on an unknown model ended with an error result. The old
+  capture would have saved the error text as the attack; the new one left the file empty, which
+  the skill treats as missing.
+- **Check-ins (decision 16).** With a 20-second interval: both test calls listed, then only the
+  one still running, then "no calls running". Each call's record was gone once it ended, and a
+  record holding a dead process id was ignored.
+- **Not verified:** a full contest; the synthesizer, judge and final-check briefs end to end; a
+  Claude captain starting a worker under the `acceptEdits` fallback; whether a user's own
+  permission rules widen that fallback (taken from the reviewer's reading, not tested); the
+  Claude three-worker limit; whether a Claude competitor in auto mode can use the built-in tools
+  that act on the user's Claude account; a `.pid` record whose process id really is reused.

@@ -48,37 +48,61 @@ high). Codex captain model and reasoning level (default: `model` and `model_reas
 and level per side. Never ask about lenses, the rubric, the judges or time limits.
 
 **Every run:** `--claude <model>[:<effort>]` and `--codex <model>[:<effort>]` replace that captain
-for this run only. Then check that the Claude side can start, with a one-word call on its settings:
+for this run only and are never written to the file. Then check that each side can start, with a
+one-word call on its captain's settings, and one more for a pinned worker model. Claude:
 ```bash
-claude -p --model <model> --effort <effort> --permission-mode auto --output-format stream-json --verbose 'Reply with the single word OK.' 2>/dev/null \
-  | jq -rs '([.[]|select(.subtype=="init").model][0] // "none"), ([.[]|select(.type=="system")|.permissionMode|values]|unique|join(",")), (.[]|select(.type=="result")|if .is_error then "ERROR: " + .result else .result end)'
+case '<effort>' in low|medium|high|xhigh|max)
+  claude -p --model <model> --effort <effort> --permission-mode auto --strict-mcp-config --disable-slash-commands \
+    --output-format stream-json --verbose 'Reply with the single word OK.' \
+  | jq -rs '([.[]|select(.subtype=="init").model][0] // "none"), ([.[]|select(.type=="system")|.permissionMode|values]|unique|join(",")), ([.[]|select(.type=="result")][0]|if . == null then "ERROR: no result" elif .is_error then "ERROR: " + (.result|tostring) else "OK" end)' ;;
+  *) echo 'ERROR: effort must be low, medium, high, xhigh or max' ;; esac
 ```
-It prints the resolved model, the start-up permission modes, then `OK`. Any other last line: the
-`claude` command cannot run (logged out, see `claude auth status`, a login separate from this
-session's; or too old for the model, and the error names the version): stop and tell the user. A
-middle line other than exactly `auto` (`default`, `auto,default`) means auto mode was refused and
-every write would be denied: use the fallback in "Launching a call" and say so with the card. Put
-the first line on the card: an alias like `opus` resolves per `claude` version, maybe not to this
-session's model. Print the card and wait for "go" or a change; a change is saved.
-`--yes` skips the card, and with no saved file the questions too (defaults, nothing saved).
+It prints the resolved model, the start-up permission modes, then `OK`, taken from the call's error
+flag and not its wording. A last line starting `ERROR`: the `claude` command cannot run that
+line-up (an effort it would silently ignore; logged out, see `claude auth status`, a login separate
+from this session's; or too old for the model, and the error names the version). Stop and tell the
+user in plain words; a model or level they give in reply is a change at the card, so check again.
+A middle line other than exactly `auto` (`default`, `auto,default`) for a captain means auto mode
+was refused and every write would be denied: use the fallback in "Launching a call". For a pinned
+worker ignore the middle line: a worker runs under its captain's mode. Codex:
+```bash
+OUT="$(codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox read-only <contain> --skip-git-repo-check --ephemeral \
+  'Reply with the single word OK.' < /dev/null 2>&1)" && echo OK || printf '%s\n' "$OUT" | tail -n 3
+```
+It prints `OK`, or the end of Codex's error: stop and tell the user (logged out, see `codex login
+status`; a model or level this account cannot use; or a set-up that needs `~/.codex/config.toml`,
+such as a custom model provider, which KAGE does not load). `<contain>` stands for these flags,
+pasted in full into every Codex call in this skill:
+```text
+--ignore-user-config --ignore-rules --disable plugins --disable apps --disable browser_use --disable computer_use --disable memories -c 'sandbox_workspace_write.writable_roots=[]' -c sandbox_workspace_write.network_access=false
+```
+Then, card or no card, print one line with what the checks found: `KAGE: Claude <model>
+(<resolved>) @ <effort>, <auto mode | accept-edits fallback>; Codex <model> @ <effort>, sandboxed.`
+An alias like `opus` resolves per `claude` version, maybe not to this session's model. Print the
+card and wait for "go" or a change. Only the field changed at the card is written to `lineup.json`,
+never a value that came from `--claude` or `--codex`. `--yes` skips the card, and with no saved
+file the questions too (defaults, nothing saved).
 ```text
 KAGE line-up
   Claude team   captain: <model> (<resolved>) @ <effort>   workers: <captain's choice | model @ effort>
   Codex team    captain: <model> @ <effort>      workers: <...>
   Format        <teams | solo>, <N> competitors (<N/2> per side), <8|12|16> top-level calls
-  Judges        one per side, on each captain's model
-Captains may start their own workers, so the true number of model calls is not fixed.
-Claude processes run in auto permission mode. For a run without prompts, switch this session to auto mode yourself: KAGE never changes your settings.
+  Single agents attackers and judges on each side's captain model; synthesis on Claude's, final check on Codex's
+Not in that count: the one-word start-up checks, one retry of any call that fails, and the workers captains start (at most 3 at a time each), so the true number of model calls is not fixed.
+Claude processes run in <auto permission mode | the accept-edits fallback, because auto mode was refused>. Codex processes are sandboxed and start without your Codex config. For a run without prompts, switch this session to auto mode yourself: KAGE never changes your settings.
 Run it?  (go / change <what>)
 ```
-Solo shows `workers: none` and drops the "Captains may" line.
+Solo shows `workers: none` and drops "and the workers captains start (at most 3 at a time each)".
 
 ## 2. Run folder and task file
 
 `RUN` = `<cwd>/.kage/<run>` (`<run>` from `date +%Y%m%d-%H%M%S`), with subfolders `briefs candidates
-attacks verdicts logs tests shots`. In a git repo, hide it without editing the user's `.gitignore`:
+attacks verdicts logs tests shots`. In every command quote each path, since a folder name may hold
+a space, and redirect output with `>|` as the snippets do, so a retry can overwrite the first try's
+file even in a shell set to refuse that. In a git repo, hide the run folder without editing the
+user's `.gitignore`:
 ```bash
-X="$(git rev-parse --git-path info/exclude)"; grep -qxF '.kage/' "$X" 2>/dev/null || echo '.kage/' >> "$X"
+X="$(git rev-parse --git-path info/exclude)"; grep -qxF '.kage/' "$X" 2>/dev/null || echo '.kage/' | tee -a "$X" >/dev/null
 ```
 In team mode, copy the captain playbook `captain.md`, which sits beside this file, to `RUN/captain.md`.
 The other processes cannot see this conversation, so `RUN/task.md` must stand alone: the request in
@@ -100,10 +124,11 @@ byte-identical for everyone by construction.
 
 One lens per competitor: n=2 uses the first two, n=4 the first four. Deal models and lenses with a
 real shuffle (n rows per list), because a letter that predicts the model would unblind the judges.
-`roster.md` is the only place identities live; no later brief mentions it.
+`roster.md` is the only place identities live; no later brief mentions it, and nothing that names a
+model or a side is ever put under `RUN/candidates` or `RUN/finalcheck`, where the blind roles start.
 ```bash
 paste <(printf 'claude\ncodex\nclaude\ncodex\n') <(printf 'minimal\nrigorous\nuser-first\ncontrarian\n' | sort -R) \
-  | sort -R | paste <(printf 'A\nB\nC\nD\n') - > RUN/roster.md
+  | sort -R | paste <(printf 'A\nB\nC\nD\n') - >| "RUN/roster.md"
 ```
 
 ## 4. Workspace, by task type
@@ -115,8 +140,8 @@ Classify the task and create one folder per competitor, `RUN/candidates/<L>/`.
   once that worktrees start from HEAD, so uncommitted changes are not what competitors see. Make one
   worktree per candidate plus a pristine `RUN/base`, and symlink dependency folders to save installs:
   ```bash
-  git worktree add --detach RUN/candidates/<L> HEAD
-  ln -s "$PWD/node_modules" RUN/candidates/<L>/node_modules   # likewise .venv, where one exists
+  git worktree add --detach "RUN/candidates/<L>" HEAD
+  ln -s "$PWD/node_modules" "RUN/candidates/<L>/node_modules"   # likewise .venv, where one exists
   ```
   Find the test command in CLAUDE.md / AGENTS.md, `package.json` scripts, `pyproject.toml` or the
   Makefile; if there is none, ask the user once.
@@ -126,54 +151,76 @@ Classify the task and create one folder per competitor, `RUN/candidates/<L>/`.
 Every model call is its own command-line process, started by Bash with `run_in_background: true`
 and `timeout: 7200000` (2 hours, the most Bash allows), so each side runs on its line-up model and
 a captain can start workers. `<name>` is `solve-<L>`, `attack-<L>`, `judge-claude`, `judge-codex`,
-`synth` or `final-check`; `<model>` and `<effort>` are that side's captain's. The leading `echo`
-records the process for the check-ins below. Four shapes:
+`synth` or `final-check`; `<model>` and `<effort>` are that side's captain's; `<contain>` is step
+1's flag list. `<start>` is where a read-only role begins: `RUN/candidates` (the final check:
+`RUN/finalcheck`), which holds only the work, so a role that lists its folder sees no logs, briefs
+or roster. The leading `echo` records the process for the check-ins below, and the trailing `rm`
+clears the record when the call ends. Four shapes:
 ```bash
 # Codex, may write (competitor): the sandbox confines it, and its workers, to <dir>
-echo $$ > RUN/logs/<name>.pid; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox workspace-write \
-  --skip-git-repo-check --ephemeral -C <dir> -o RUN/logs/<name>.last.md - < RUN/briefs/<name>.md > RUN/logs/<name>.log 2>&1
+echo $$ >| "RUN/logs/<name>.pid"; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox workspace-write <contain> \
+  --skip-git-repo-check --ephemeral -C "<dir>" -o "RUN/logs/<name>.last.md" - < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>&1; rm -f "RUN/logs/<name>.pid"
 # Codex, read-only (attacker, judge, final check): -o saves its final message as the output file
-echo $$ > RUN/logs/<name>.pid; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox read-only \
-  --skip-git-repo-check --ephemeral -C RUN [-i <png> -i <png> ...] -o <output file> - < RUN/briefs/<name>.md > RUN/logs/<name>.log 2>&1
+echo $$ >| "RUN/logs/<name>.pid"; codex exec -m <model> -c model_reasoning_effort=<effort> --sandbox read-only <contain> \
+  --skip-git-repo-check --ephemeral -C "<start>" [-i "<png>" -i "<png>" ...] -o "<output file>" - < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>&1; rm -f "RUN/logs/<name>.pid"
 # Claude, may write (competitor, synthesizer): the log is a stream of JSON events, so it grows while the call works
-echo $$ > RUN/logs/<name>.pid; ( cd <dir> && claude -p --model <model> --effort <effort> --permission-mode auto \
-  --strict-mcp-config --output-format stream-json --verbose < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err )
-# Claude, read-only (attacker, judge): it has no tool that writes; jq saves its final message as the output file
-echo $$ > RUN/logs/<name>.pid; ( cd RUN && claude -p --model <model> --effort <effort> --permission-mode dontAsk \
-  --tools "Read,Glob,Grep" --allowedTools "Read,Glob,Grep" --strict-mcp-config --output-format stream-json --verbose \
-  < RUN/briefs/<name>.md > RUN/logs/<name>.log 2> RUN/logs/<name>.err ); \
-  jq -r 'select(.type=="result") | .result' RUN/logs/<name>.log > <output file>
+echo $$ >| "RUN/logs/<name>.pid"; ( cd "<dir>" && claude -p --model <model> --effort <effort> --permission-mode auto --strict-mcp-config \
+  --disable-slash-commands --output-format stream-json --verbose < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>| "RUN/logs/<name>.err" ); rm -f "RUN/logs/<name>.pid"
+# Claude, read-only (attacker, judge): it has no tool that writes; jq saves its final message, or nothing if the call failed
+echo $$ >| "RUN/logs/<name>.pid"; ( cd "<start>" && claude -p --model <model> --effort <effort> --permission-mode dontAsk \
+  --tools "Read,Glob,Grep" --allowedTools "Read,Glob,Grep" --strict-mcp-config --disable-slash-commands --output-format stream-json --verbose \
+  < "RUN/briefs/<name>.md" >| "RUN/logs/<name>.log" 2>| "RUN/logs/<name>.err" ); \
+  jq -r 'select(.type=="result" and (.is_error|not)) | .result' "RUN/logs/<name>.log" >| "<output file>"; rm -f "RUN/logs/<name>.pid"
 ```
+- **Codex containment.** Never launch a Codex call without `<contain>`: a user's Codex set-up
+  reaches past the sandbox (MCP servers, apps and plugins such as mail and GitHub, browser and
+  computer control, and approved-command rules that let a matching command such as `npm test` skip
+  even `read-only`). The flags start the call without `~/.codex/config.toml` and those rules,
+  switch off what is on by default, and close extra writable folders and the network whatever
+  another config layer says. A captain's workers inherit all of it.
 - **Codex sandbox.** `workspace-write` writes only in its own folder, plus `/tmp` and `$TMPDIR`. If
   `RUN` itself is under one of those (or `/private/tmp`), that would reach its neighbours, so add
   `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true`.
 - **Claude permissions.** Auto mode is the user's choice: KAGE assumes approval rather than prompt,
   with a classifier still between the model and risky actions. Nothing sandboxes these processes:
   rule 3 of the brief is their only fence. `--strict-mcp-config` keeps the user's MCP servers and
-  connected accounts out of every Claude call. If step 1 found auto refused, use `--permission-mode
-  acceptEdits --allowedTools "Read,Glob,Grep,Agent,Bash(<test command>)"` instead (no `Bash` entry
-  without a test command): edits and simple file commands (such as `touch`) are accepted inside
-  `<dir>` only, and whatever else would prompt is denied. Never use `bypassPermissions` or
-  `--dangerously-skip-permissions`: they switch every check off in a process nobody is watching.
-- **Pinned workers.** Codex adds `-c 'agents.default_subagent_model="<model>"' -c
-  'agents.default_subagent_reasoning_effort="<effort>"'`. Claude adds `--agents '{"kage-worker":
-  {"description": "Does one bounded piece of a larger task.", "prompt": "Do the one piece you are
-  briefed on, inside the folder you are given, then report what you changed and how you checked
-  it.", "model": "<model>", "effort": "<effort>"}}'`. Captain's choice needs no flag.
-- **Single agents.** A solo Claude competitor and the synthesizer add `--disallowedTools Agent`.
-  No Codex switch we tried removes its worker tool, so there the brief is the only rule: a line
-  starting `collab:` in a solo competitor's log means it delegated anyway; note it in the result.
+  connected accounts out of every Claude call, and `--disable-slash-commands` their skills. If step
+  1 found auto refused, use `--permission-mode acceptEdits --allowedTools
+  "Read,Glob,Grep,Agent,Bash(<test command>)"` instead (no `Bash` entry without a test command):
+  edits and simple file commands (such as `touch`) are accepted inside `<dir>` only, the test
+  command runs unsandboxed, and what would otherwise prompt is denied unless the user's own
+  settings allow it. Never use `bypassPermissions` or `--dangerously-skip-permissions`: they switch
+  every check off in a process nobody is watching.
+- **Pinned workers.** `<worker_model>` and `<worker_effort>` are that side's pinned worker
+  settings, not the captain's. Codex adds `-c 'agents.default_subagent_model="<worker_model>"' -c
+  'agents.default_subagent_reasoning_effort="<worker_effort>"'`. Claude adds `--agents
+  '{"kage-worker": {"description": "Does one bounded piece of a larger task.", "prompt": "Do the
+  one piece you are briefed on, inside the folder you are given, then report what you changed and
+  how you checked it.", "model": "<worker_model>", "effort": "<worker_effort>"}}'`. Captain's
+  choice needs no flag.
+- **Worker limit.** A Codex team competitor adds `-c agents.max_concurrent_threads_per_session=3`:
+  a fourth worker at the same time is refused, and a finished worker frees its place. Claude has no
+  such switch, so there the playbook's limit is an instruction. Nothing caps the total.
+- **Single agents.** A solo Claude competitor and the synthesizer add `--disallowedTools Agent`;
+  the read-only Claude shape has no worker tool. No Codex switch we tried removes its worker tool,
+  so there the brief is the only rule. A Codex log gets a line starting `collab:` when the call
+  waits on a worker, so after a solo solve count them (counting is not reading): `grep -c
+  '^collab:' "RUN/logs/solve-<L>.log"`. Above 0, it delegated anyway: say so in the result. 0 is
+  not proof that it did not.
 - Do not read the logs. An output file that is empty or just `null` counts as missing.
 
 **Check-ins, not time limits.** Nothing below the 2-hour ceiling stops a call. After launching a
 batch, unless a check-in is already waiting, start one in the background with `timeout: 900000`:
-`sh <this skill's folder>/heartbeat.sh RUN/logs`. It returns after 10 minutes, or as soon as no
+`sh "<this skill's folder>/heartbeat.sh" "RUN/logs"`. It returns after 10 minutes, or as soon as no
 call is running, with one line per call still running: its name, minutes elapsed, and `log growing`
 or `no new output for N min`. Show the user those lines as they are and, if any call is still
-running, start it again. Never stop a call yourself because it is slow or quiet; the user can say
-stop at any check-in. Between check-ins wait for the completion notifications and do not poll. If a
-call is stopped at the 2-hour ceiling, say so plainly (which call, and that it ran 2 hours without
-finishing) and ask the user whether to rerun it, go on without it, or stop.
+running, start it again. A call whose completion notification has arrived is finished whatever a
+check-in says (a call stopped from outside leaves its `.pid` file behind, and the number in it can
+later belong to another program): `rm -f` that file and do not start another check-in for it.
+Never stop a call yourself because it is slow or quiet; the user can say stop at any check-in.
+Between check-ins wait for the completion notifications and do not poll. If a call is stopped at
+the 2-hour ceiling, say so plainly (which call, and that it ran 2 hours without finishing) and ask
+the user whether to rerun it, go on without it, or stop.
 
 ## 5. Solve, then collect evidence
 
@@ -183,11 +230,12 @@ with `<dir>` = `RUN/candidates/<L>`. A competitor with no `solution.md`, no `ind
 diff gets one retry, then is dropped and reported. Under 2 left: stop, say so.
 
 The evidence is yours to collect, not the competitors'. **Code:** write each patch, then run the
-tests in `base` (to `base.txt`) and in every candidate, one at a time as suites share ports:
+tests in `base` (to `base.txt`) and in every candidate, one at a time as suites share ports. This
+runs code the competitors wrote, with your own permissions and no sandbox:
 ```bash
-git -C RUN/candidates/<L> add -A -N -- . ':(exclude)node_modules' ':(exclude).venv'
-git -C RUN/candidates/<L> diff HEAD -- . ':(exclude)node_modules' ':(exclude).venv' > RUN/candidates/<L>.patch
-( cd RUN/candidates/<L> && <test command> ) > RUN/tests/<L>.txt 2>&1; echo "exit=$?" >> RUN/tests/<L>.txt
+git -C "RUN/candidates/<L>" add -A -N -- . ':(exclude)node_modules' ':(exclude).venv'
+git -C "RUN/candidates/<L>" diff HEAD -- . ':(exclude)node_modules' ':(exclude).venv' >| "RUN/candidates/<L>.patch"
+( cd "RUN/candidates/<L>" && <test command> ) >| "RUN/tests/<L>.txt" 2>&1; echo "exit=$?" >> "RUN/tests/<L>.txt"
 ```
 If a patch touches a lockfile, swap that worktree's symlink for a real install first. Write
 `RUN/tests/summary.md`: pass or fail per candidate, and each test that fails there but passes in
@@ -203,9 +251,9 @@ written once as `RUN/shots/mobile.html`:
 ```bash
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 "$CHROME" --headless --hide-scrollbars --virtual-time-budget=5000 --window-size=1440,900 \
-  --screenshot=RUN/shots/<L>-desktop.png "file://RUN/candidates/<L>/index.html" >/dev/null 2>&1
+  --screenshot="RUN/shots/<L>-desktop.png" "file://RUN/candidates/<L>/index.html" >/dev/null 2>&1
 "$CHROME" --headless --hide-scrollbars --virtual-time-budget=5000 --window-size=390,844 \
-  --screenshot=RUN/shots/<L>-mobile.png "file://RUN/shots/mobile.html?file://RUN/candidates/<L>/index.html" >/dev/null 2>&1
+  --screenshot="RUN/shots/<L>-mobile.png" "file://RUN/shots/mobile.html?file://RUN/candidates/<L>/index.html" >/dev/null 2>&1
 ```
 The time budget lets scripts settle. Percent-encode spaces in the URLs. Chrome exits 0 even when it
 writes nothing, so success is `test -s` on the PNG. Do not add `--user-data-dir`: a fresh profile
@@ -244,7 +292,7 @@ If a verdict is wrapped in a code fence, strip the fence lines and change nothin
 missing or not valid JSON gets one rerun; after that, rank on the judge you have and say so. This
 prints letter, total, fatal flag and standing-attack count without arithmetic slips:
 ```bash
-jq -r '.candidates|to_entries[]|[.key,(.value.scores|.correctness*3+.completeness*2.5+.robustness*2+.specificity*1.5+.clarity),.value.fatal,([.value.attacks[]|select(.verdict=="STANDING")]|length)]|@tsv' RUN/verdicts/judge-claude.json
+jq -r '.candidates|to_entries[]|[.key,(.value.scores|.correctness*3+.completeness*2.5+.robustness*2+.specificity*1.5+.clarity),.value.fatal,([.value.attacks[]|select(.verdict=="STANDING")]|length)]|@tsv' "RUN/verdicts/judge-claude.json"
 ```
 Score = mean of the two judges' totals. A candidate either judge marks fatal ranks below every
 non-fatal one. Ties go to fewer standing attacks, then higher correctness. Write `RUN/ranking.md`
@@ -254,11 +302,13 @@ or reorder because you disagree with a judge.
 ## 8. Synthesis and final check
 
 Prepare `RUN/final/` from the top-ranked candidate without reading it. Text and visual: `cp -R
-RUN/candidates/<top>/. RUN/final/`. Code: `git worktree add --detach RUN/final HEAD`, then `git -C
-RUN/final apply RUN/candidates/<top>.patch`, plus the symlinks. One Claude single agent, launched in
-the may-write shape with `<dir>` = `RUN/final`, gets `RUN/briefs/synth.md`. For code, then run the
-tests in `final` (to `RUN/tests/final.txt`) and write `RUN/final.patch` with the step 5 commands,
-adding `':(exclude)SYNTHESIS.md'`.
+"RUN/candidates/<top>/." "RUN/final/"`. Code: `git worktree add --detach "RUN/final" HEAD`, then
+`git -C "RUN/final" apply "RUN/candidates/<top>.patch"`, plus the symlinks. One Claude single
+agent, launched in the may-write shape with `<dir>` = `RUN/final`, gets `RUN/briefs/synth.md`. Then
+`test -s "RUN/final/SYNTHESIS.md"`: if that fails the synthesis did not happen, so rerun it once,
+and if it fails again skip the final check and report the raw top candidate as the final, saying
+so. For code, then run the tests in `final` (to `RUN/tests/final.txt`) and write `RUN/final.patch`
+with the step 5 commands, adding `':(exclude)SYNTHESIS.md'`.
 
 Then one Codex judge, read-only, scores the synthesis against the raw top-ranked candidate, and the
 baseline if there is one, without knowing which is which. The path `final/` would give it away, so
@@ -266,11 +316,12 @@ copy each into `RUN/finalcheck/X/`, `Y/` (and `Z/`), leave `SYNTHESIS.md` out, a
 from this line (drop `Z` and `baseline` when there is none), which also records it in `roster.md`.
 Read it with `while read LBL WHAT`, not `set --`: zsh does not split an unquoted variable.
 ```bash
-paste <(printf 'X\nY\nZ\n') <(printf 'synthesis\ntop\nbaseline\n' | sort -R) | sed 's/^/finalcheck /' | tee -a RUN/roster.md
+paste <(printf 'X\nY\nZ\n') <(printf 'synthesis\ntop\nbaseline\n' | sort -R) | sed 's/^/finalcheck /' | tee -a "RUN/roster.md"
 ```
-Confirm every `finalcheck/` folder is non-empty before launching the judge. A code copy is the
-patch plus its test output. Visual copies are rendered as in step 5 to `RUN/finalcheck/X-desktop.png`
-and so on, and attached with `-i`. Brief `RUN/briefs/final-check.md`, verdict `RUN/verdicts/final.json`.
+Confirm every `finalcheck/` folder is non-empty before launching the judge, whose `<start>` is
+`RUN/finalcheck`. A code copy is the patch plus its test output. Visual copies are rendered as in
+step 5 to `RUN/finalcheck/X-desktop.png` and so on, and attached with `-i`. Brief
+`RUN/briefs/final-check.md`, verdict `RUN/verdicts/final.json`.
 
 ## 9. Result
 
@@ -287,11 +338,15 @@ RANKED
 
 Judging: <screenshots, desktop 1440x900 and mobile 390x844 | source only: why>
 Dropped: <none | L (model, lens): why>
+Mode: <teams | solo>; Claude <resolved model> @ <effort>, <auto mode | accept-edits fallback>; Codex <model> @ <effort>, sandboxed
+Solo rule: <kept, as far as the logs show | L (codex) started a worker anyway>
 ```
 The synthesis always comes first. The WARNING line appears only when something beat it in the final
 check (a higher score, or the synthesis fatal and another not), and then it must appear, because the
 user is choosing what to ship. RANKED lists every candidate; its path is the `.patch` for code and
-the `index.html` for visual. For a text task, then print the synthesis in full.
+the `index.html` for visual. The `Solo rule` line appears in solo runs only. If the synthesis failed
+twice, the first line is `FINAL: raw candidate <L> (the synthesis did not finish)` with no `built
+from` or `final check` line. For a text task, then print the final in full.
 - code and visual: apply nothing. Ask "apply the final, apply a candidate, or change something?"
   Only after the answer, for code, `git apply` the chosen patch in the user's checkout.
 - code: also print the cleanup (the patches stay in `RUN`): `git worktree remove --force` for each
@@ -303,26 +358,30 @@ the `index.html` for visual. For a text task, then print the synthesis in full.
   JSONs, test output, `ranking.md` and, at the end, `final/`. The rest tempts you to judge.
 - Never paraphrase the task for one agent or add a hint to one call: everyone reads the same file.
 - Never apply anything to the user's project before they answer the question in step 9.
-- If your context is compacted, `ls -R RUN` shows what exists; resume from the first missing artifact.
+- If your context is compacted, `ls -R "RUN"` shows what exists; resume from the first missing artifact.
 
 ## Prompt templates
 
 One template per role, shared by both models. Fill the `{{placeholders}}` and write the result to
-`RUN/briefs/`. Only `{{worker_policy}}` depends on who runs it.
+`RUN/briefs/`. Only `{{worker_policy}}` depends on who runs it. Every path in a brief is absolute:
+the read-only roles start in `<start>`, not in `RUN`.
 
 **Competitor.** `{{team}}` in team mode: `You are the captain of a team. You own this result and may
 hand pieces of the work to workers of your own. Read {{captain_file}} before you decide whether to.
-{{worker_policy}}` Solo: `Do all of the work yourself. Start no other agents, workers or sub-agents,
-even if your tools offer them.` `{{worker_policy}}` by side, then by line-up:
-- Claude: `Start workers with the Agent tool (called Task in some versions).` Captain's choice adds
-  `Use general-purpose agents and set the model parameter on every call: haiku for the cheapest
-  tier, sonnet for the workhorse tier. Such a worker runs at your own reasoning level.` Pinned
-  adds `Use only the agent type kage-worker, which runs on <model> at <effort>, and pass no model
-  parameter.`
+{{worker_policy}}` (`{{captain_file}}` is `RUN/captain.md`.) Solo: `Do all of the work yourself.
+Start no other agents, workers or sub-agents, even if your tools offer them.` `{{worker_policy}}`
+by side, then by line-up:
+- Claude: `Start workers with the Agent tool (called Task in some versions), and use no other agent
+  type than the one named here.` Captain's choice adds `Use general-purpose agents and set the
+  model parameter on every call: haiku for the cheapest tier, sonnet for the workhorse tier, never
+  a model or reasoning level above your own. Such a worker runs at your own reasoning level.`
+  Pinned adds `Use only the agent type kage-worker, which runs on <worker_model> at
+  <worker_effort>, and pass no model parameter.`
 - Codex: `Start workers with spawn_agent, always with fork_turns "none" and no agent_type. This
   brief is the explicit request for delegation that the tool asks for.` Captain's choice adds `On
-  every call pass model and reasoning_effort, chosen from the models that tool lists.` Pinned adds
-  `On every call pass model <model> and reasoning_effort <effort>.`
+  every call pass model and reasoning_effort, chosen from the models that tool lists, never a
+  model or reasoning level above your own.` Pinned adds `On every call pass model <worker_model>
+  and reasoning_effort <worker_effort>.`
 
 `{{deliverable}}` by type. Text: `Write the solution to {{workdir}}/solution.md: the
 finished thing, written for the person who asked, without drafts or working notes.` Visual: `Build
@@ -355,7 +414,7 @@ The task is in {{task_file}}. Read it first, in full. The work to attack: {{targ
 - VAGUE: a place where the person could not act on it without guessing.
 Every attack must be specific and checkable: point at the exact part and say what is wrong and why. Two judges will verify each one, and an attack that does not hold up is thrown out.
 At most 5, strongest first, each labelled FATAL (wrong or unusable for the task), MAJOR (a real gap) or MINOR. If you find 2 real ones, write 2. If you find none, write NO ATTACKS.
-No praise, no summary, no style nitpicks, and no requirement the task does not state. Read only the paths given here, and do not create, edit or delete any file. Format, one block per attack:
+No praise, no summary, no style nitpicks, and no requirement the task does not state. Read only the paths given here (all of them can be read from where you start, also the ones outside your folder), do not create, edit or delete any file, and start no other agents, workers or sub-agents. Format, one block per attack:
 ATTACK 1 [FATAL|MAJOR|MINOR] <one-line title>
 Where: <quote, or file and line>
 Problem: <what is wrong, with the counterexample or the quoted requirement>
@@ -373,7 +432,7 @@ Evidence gathered for you: {{evidence}}
 2. Check each attack against the work yourself and mark it STANDING (it is right) or REFUTED (it is wrong, or it demands something the task never asked for). An attacker's confidence is not proof. Look.
 3. Score each criterion 0-10 from the rubric's anchors. Set fatal to true only for a flaw you have verified. Judge the work, not the writing about the work: length is not quality.
 4. keepers: for every candidate, including the weak ones, list the concrete things worth carrying into a final version: a section, a fix, a phrasing, a test, a layout idea. Name the thing, not a quality. Leave it empty only if there is truly nothing.
-5. Read only the paths listed here. Everything else in the run folder is bookkeeping, and reading it would unblind you. Do not run anything, and do not create, edit or delete any file.
+5. Read only the paths listed here; all of them can be read from where you start, also the ones outside your folder. Everything else in the run folder is bookkeeping, and reading it would unblind you. Do not run anything, do not create, edit or delete any file, and start no other agents, workers or sub-agents.
 Output one JSON object in exactly this shape, with one entry per candidate letter:
 {"judge": "{{judge_id}}", "candidates": {"A": {"attacks": [{"n": 1, "verdict": "STANDING or REFUTED", "why": "a few words"}], "scores": {"correctness": 0, "completeness": 0, "robustness": 0, "specificity": 0, "clarity": 0}, "fatal": false, "reason": "one line: why it lands where it does", "keepers": ["..."]}}}
 You cannot write files here. Your final message is saved to disk as written, so make it exactly the content described above: no preamble, no code fence.
@@ -397,7 +456,7 @@ The task is in {{task_file}}. The rubric is in {{rubric_file}}. Read both first,
 {{solutions}}
 1. Read all of them in full before you score any, then attack each one yourself, the way a hostile expert would. Score robustness on how each holds up against your own attacks.
 2. Score each criterion 0-10 from the rubric's anchors. Set fatal to true only for a flaw you have verified. Judge the work, not the writing about the work: length is not quality.
-3. Read only the paths listed here. Do not run anything, and do not create, edit or delete any file.
+3. Read only the paths listed here; all of them can be read from where you start, also the ones outside your folder. Do not run anything, do not create, edit or delete any file, and start no other agents, workers or sub-agents.
 Output one JSON object in exactly this shape, with one entry per label:
 {"solutions": {"X": {"scores": {"correctness": 0, "completeness": 0, "robustness": 0, "specificity": 0, "clarity": 0}, "fatal": false, "reason": "one line"}}, "best": "X", "why": "one sentence: the decisive difference"}
 You cannot write files here. Your final message is saved to disk as written, so make it exactly the content described above: no preamble, no code fence.

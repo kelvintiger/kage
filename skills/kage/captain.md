@@ -44,6 +44,8 @@ start a fresh worker instead of feeding more work to one that already has a long
 
 At most two or three workers at a time, and only on pieces that touch different files. Two workers
 in one file overwrite each other, and more than three is more reports than you can check properly.
+Never more than three at once: your tool may refuse a fourth outright. That refusal is the limit
+doing its job, so wait for a worker to finish instead of looking for a way around it.
 
 ## Check the work, not the report
 
